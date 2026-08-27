@@ -17,4 +17,4 @@ for (const vulnerability of Object.values(report.vulnerabilities ?? {})) {
   for (const via of vulnerability.via ?? []) if (typeof via === "object" && via.url) advisoryUrls.add(via.url);
 }
 if (JSON.stringify([...advisoryUrls].sort()) !== JSON.stringify([...policy.advisories].sort())) throw new Error("Dependency advisory identity differs from the reviewed disposition.");
-console.log(`Dependency audit policy accepted ${foundPackages.length} reviewed optional build-tooling findings through ${policy.expires}; the runtime image has a separate filesystem exclusion gate and no report contents were printed.`);
+console.log(`Dependency audit policy accepted ${foundPackages.length} reviewed findings through ${policy.expires}; the runtime image has a separate filesystem exclusion gate and no report contents were printed.`);
