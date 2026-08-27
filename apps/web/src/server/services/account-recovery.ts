@@ -24,7 +24,7 @@ async function requestAccountAction(emailInput: string, purpose: AccountTokenPur
   const expiresAt=new Date(now.getTime()+(purpose==="PASSWORD_RESET"?30*60_000:24*60*60_000));
   const payloadJson=JSON.stringify({tokenId}),idempotencyKey=`email:${purpose}:${tokenId}`,subject=purpose==="EMAIL_VERIFY"?"Verify your SnagTime email":"Reset your SnagTime password";
   await db.$transaction(async(tx)=>{
-    if(process.env.DATABASE_PROVIDER==="postgresql"&&process.env.NODE_ENV==="production") await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`tempocove-account-recovery-v1\0${purpose}\0${email}`},0)) IS NULL AS "recovery_lock"`;
+    if(process.env.DATABASE_PROVIDER==="postgresql"&&process.env.NODE_ENV==="production") await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${JSON.stringify(["tempocove-account-recovery-v1",purpose,email])},0)) IS NULL AS "recovery_lock"`;
     else await tx.$queryRaw`SELECT ${email} AS "recovery_lock"`;
     const locked=await tx.$queryRaw<Array<{emailVerifiedAt:Date|null}>>`SELECT u."emailVerifiedAt" FROM "User" u JOIN "Membership" m ON m."userId"=u."id"
       WHERE u."id"=${userId} AND m."workspaceId"=${workspaceId} AND m."status"='ACTIVE' LIMIT 1`;
