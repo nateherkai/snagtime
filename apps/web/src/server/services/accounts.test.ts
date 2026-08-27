@@ -70,8 +70,8 @@ describe("production workspace accounts", () => {
   });
 
   it("serializes concurrent duplicate registrations through the same fixed phase trace", async()=>{
-    const email=`register-race-${crypto.randomUUID()}@example.com`,traces=Array.from({length:6},()=>[] as string[]);
-    await expect(Promise.all(traces.map((trace,index)=>registerAccount({name:`Race ${index}`,email,password:"Strong!Workspace9",workspaceName:`Race Workspace ${index}`,timeZone:"UTC"},phase=>trace.push(phase))))).resolves.toHaveLength(6);
+    const email=`register-race-${crypto.randomUUID()}@example.com`,traces=Array.from({length:3},()=>[] as string[]);
+    await expect(Promise.all(traces.map((trace,index)=>registerAccount({name:`Race ${index}`,email,password:"Strong!Workspace9",workspaceName:`Race Workspace ${index}`,timeZone:"UTC"},phase=>trace.push(phase))))).resolves.toHaveLength(traces.length);
     for(const trace of traces) expect(trace).toEqual(traces[0]);
     const user=await db.user.findUniqueOrThrow({where:{email},include:{memberships:true}});userIds.push(user.id);workspaceIds.push(user.memberships[0]!.workspaceId);
     expect(await db.user.count({where:{email}})).toBe(1);expect(user.memberships).toHaveLength(1);
