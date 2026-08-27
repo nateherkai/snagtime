@@ -11,6 +11,13 @@ on:
         type: boolean
 permissions: { contents: read }
 jobs:
+  history-secret-scan:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with: { fetch-depth: 0 }
+      - run: node scripts/ci-secret-scan.mjs
+        env: { CI_SECRET_SCAN_HISTORY: "true" }
   verify:
     runs-on: ubuntu-24.04
     container: node:24.15.0-bookworm-slim@sha256:4e6b70dd6cbfc88c8157ba19aa3d9f9cce6ba4703576d55459e45efcbc9c5f5d
@@ -98,7 +105,7 @@ jobs:
       - run: npm test && npm run typecheck && npm run lint && npm run worker:build && npm run build
         env: { DATABASE_URL: "file:./dev.db", DATABASE_PROVIDER: sqlite }
       - run: npm run ci:backup-contract && npm run ci:audit-policy
-      - run: CI_SECRET_SCAN_HISTORY=true npm run ci:secret-scan
+      - run: npm run ci:secret-scan
       - run: npm sbom --omit=dev --sbom-format cyclonedx > snagtime-sbom.cdx.json && node -e "const f=require('fs'),c=require('crypto'),b=f.readFileSync('snagtime-sbom.cdx.json');f.writeFileSync('snagtime-sbom.sha256',c.createHash('sha256').update(b).digest('hex')+'  snagtime-sbom.cdx.json\n')"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with: { name: snagtime-source-sbom, path: "snagtime-sbom.*", if-no-files-found: error }
