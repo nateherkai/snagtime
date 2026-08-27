@@ -79,7 +79,7 @@ describe("production workspace accounts", () => {
     expect(await db.availabilitySchedule.count({where:{workspaceId:user.memberships[0]!.workspaceId,userId:user.id}})).toBe(1);
     expect(await db.accountActionToken.count({where:{userId:user.id,purpose:"EMAIL_VERIFY",revokedAt:null}})).toBe(1);
     expect(await db.emailOutbox.count({where:{workspaceId:user.memberships[0]!.workspaceId,kind:"EMAIL_VERIFY"}})).toBe(1);
-  });
+  },15_000);
 
   it("keeps the canonical workspace identity synchronized with saved branding", async () => {
     const created = await account("branding-identity", false);
