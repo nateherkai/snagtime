@@ -33,6 +33,7 @@ const env = {
   HOST: "127.0.0.1",
   PORT: port,
   NEXT_DIST_DIR: ".next-playwright",
+  NEXT_TELEMETRY_DISABLED: "1",
 };
 for (const name of ["DEMO_HOST_EMAIL", "DEMO_HOST_PASSWORD", "AUTH_SECRET", "EMAIL_TOKEN_SECRET", "TOKEN_ENCRYPTION_KEY"]) {
   if (!env[name]) throw new Error(`Playwright configuration did not provide ${name}.`);
@@ -46,9 +47,20 @@ function checked(script, args) {
 checked("node_modules/prisma/build/index.js", ["migrate", "deploy", "--schema", "prisma/schema.prisma"]);
 checked("node_modules/tsx/dist/cli.mjs", ["prisma/seed.ts"]);
 const child = spawn(process.execPath, [resolve(root, "node_modules/next/dist/bin/next"), "dev", "--hostname", "127.0.0.1", "--port", port], { cwd: resolve(root, "apps/web"), env, shell: false, stdio: ["ignore", "ignore", "pipe"] });
+const reportedCategories = new Set();
+function reportCategory(category) {
+  if (reportedCategories.has(category)) return;
+  reportedCategories.add(category);
+  process.stderr.write(`E2E server diagnostic: ${category}.\n`);
+}
 child.stderr?.on("data", (chunk) => {
   const text = String(chunk);
-  if (/error|failed|exception/i.test(text) && !/source map/i.test(text)) process.stderr.write("E2E server reported a startup/runtime error.\n");
+  if (/EADDRINUSE/i.test(text)) reportCategory("requested port was unavailable");
+  else if (/database is locked/i.test(text)) reportCategory("database lock prevented startup");
+  else if (/EPERM|operation not permitted|permission denied/i.test(text)) reportCategory("filesystem permission prevented startup");
+  else if (/ENOENT|cannot find module/i.test(text)) reportCategory("a required file or module was unavailable");
+  else if (/SWC|native binding/i.test(text) && /error|failed|exception/i.test(text)) reportCategory("Next.js native compiler failed to load");
+  else if (/error|failed|exception/i.test(text) && !/source map/i.test(text)) reportCategory("uncategorized Next.js startup or runtime error");
 });
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => child.kill(signal));
 child.on("exit", (code) => process.exit(code ?? 1));
