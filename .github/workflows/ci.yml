@@ -93,7 +93,7 @@ jobs:
           TEMPOCOVE_PROVIDER_PROOF_MODE: "true"
           PAYMENTS_PROVIDER: stripe
           STRIPE_SECRET_KEY: sk_test_CIServiceHarness000000000000000
-          STRIPE_WEBHOOK_SECRET: ci_webhook_fixture
+          STRIPE_WEBHOOK_SECRET: whsec_ci_webhook_fixture
           NEXT_PUBLIC_APP_URL: http://localhost:3000/
       - run: npm test && npm run typecheck && npm run lint && npm run worker:build && npm run build
         env: { DATABASE_URL: "file:./dev.db", DATABASE_PROVIDER: sqlite }
