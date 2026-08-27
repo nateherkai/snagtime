@@ -58,7 +58,7 @@ child.stderr?.on("data", (chunk) => {
   if (/EADDRINUSE/i.test(text)) reportCategory("requested port was unavailable");
   else if (/database is locked/i.test(text)) reportCategory("database lock prevented startup");
   else if (/EPERM|operation not permitted|permission denied/i.test(text)) reportCategory("filesystem permission prevented startup");
-  else if (/ENOENT|cannot find module/i.test(text)) reportCategory("a required file or module was unavailable");
+  else if (/ENOENT|module not found|can't resolve|cannot find module/i.test(text)) reportCategory("a required file or module was unavailable");
   else if (/SWC|native binding/i.test(text) && /error|failed|exception/i.test(text)) reportCategory("Next.js native compiler failed to load");
   else if (/turbopack/i.test(text) && /error|failed|exception/i.test(text)) reportCategory("Next.js incremental compiler failed");
   else if (/error|failed|exception/i.test(text) && !/source map/i.test(text)) reportCategory("uncategorized Next.js startup or runtime error");
