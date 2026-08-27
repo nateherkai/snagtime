@@ -1,0 +1,15 @@
+node_modules
+apps/web/.next
+dist
+runtime
+tmp
+acceptance
+archives
+docs
+evidence
+.env
+.env.*
+!.env.example
+prisma/*.db*
+*.tsbuildinfo
+.git

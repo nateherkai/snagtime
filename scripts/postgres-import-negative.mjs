@@ -1,0 +1,12 @@
+import { spawn,spawnSync } from "node:child_process";
+import { copyFileSync,mkdtempSync,rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join,resolve as resolvePath } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+
+const targetUrl=process.env.DATABASE_URL||"",sourcePath=process.env.SQLITE_SOURCE_PATH||"";if(!targetUrl||!sourcePath)throw new Error("DATABASE_URL and SQLITE_SOURCE_PATH are required.");
+const inventory=()=>{const run=spawnSync(process.execPath,[resolvePath("scripts/postgres-reconcile.mjs")],{cwd:process.cwd(),encoding:"utf8",env:{...process.env,DATABASE_URL:targetUrl}});if(run.status!==0)throw new Error("target reconciliation failed");return run.stdout.trim();};
+const runImporter=(source,extra={})=>new Promise(done=>{const child=spawn(process.execPath,[resolvePath("scripts/sqlite-to-postgres.mjs")],{cwd:process.cwd(),stdio:["ignore","pipe","pipe"],env:{...process.env,NODE_ENV:"test",POSTGRES_INSECURE_LOCAL_TEST:"true",CONFIRM_EMPTY_POSTGRES_IMPORT:"true",DATABASE_URL:targetUrl,SQLITE_SOURCE_PATH:source,...extra}});let stderr="";child.stderr.on("data",chunk=>{if(stderr.length<16_384)stderr+=chunk.toString("utf8")});child.on("close",code=>done({code,stderr}));});
+const before=inventory();const nonempty=await runImporter(sourcePath);if(nonempty?.code===0||!String(nonempty?.stderr||"").includes("PostgreSQL target is not empty"))throw new Error(`nonempty target import was not rejected (${JSON.stringify(nonempty)})`);if(inventory()!==before)throw new Error("failed nonempty import changed the target");
+const scratch=mkdtempSync(join(tmpdir(),"tempocove-import-race-"));const copy=join(scratch,"source.db");copyFileSync(sourcePath,copy);
+try{const racePromise=runImporter(copy,{IMPORT_TEST_SOURCE_DELAY_MS:"800"});await new Promise(resolve=>setTimeout(resolve,200));const writer=new DatabaseSync(copy);try{writer.exec(`UPDATE "User" SET name=name||' race' WHERE id=(SELECT id FROM "User" LIMIT 1)`)}finally{writer.close()}const race=await racePromise;if(race.code===0||!race.stderr.includes("SQLite source changed during the immutable snapshot"))throw new Error("source mutation race was not rejected");if(inventory()!==before)throw new Error("failed source race changed the target");console.log("SQLite import rejects source mutation races and nonempty targets without changing PostgreSQL.");}finally{rmSync(scratch,{recursive:true,force:true})}

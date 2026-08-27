@@ -1,0 +1,169 @@
+name: SnagTime CI
+on:
+  pull_request: {}
+  push: { branches: [main] }
+  workflow_dispatch:
+    inputs:
+      native_pg_load:
+        description: Run against the separately provisioned compiled production web, worker, and PostgreSQL roles
+        required: false
+        default: false
+        type: boolean
+permissions: { contents: read }
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    container: node:24.15.0-bookworm-slim@sha256:4e6b70dd6cbfc88c8157ba19aa3d9f9cce6ba4703576d55459e45efcbc9c5f5d
+    services:
+      postgres:
+        image: postgres:18.6-bookworm@sha256:7d2695c3aa88e792e8b3b233e7e4adb296a20412c6c0ca361e3edaaacfada108
+        env: { POSTGRES_USER: postgres, POSTGRES_PASSWORD: ci-only-ephemeral, POSTGRES_DB: tempocove_ci }
+        options: --health-cmd "pg_isready -U postgres -d tempocove_ci" --health-interval 5s --health-timeout 5s --health-retries 20
+    env: { DATABASE_URL: "postgresql://postgres:ci-only-ephemeral@postgres:5432/tempocove_ci", DATABASE_PROVIDER: postgresql }
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with: { fetch-depth: 0 }
+      - run: npm ci --ignore-scripts
+      - run: npm run ci:generated-drift && npm run db:generate && npm run db:generate:postgres
+      - run: npx prisma migrate deploy --schema prisma/postgresql/schema.prisma
+      - name: Provision isolated runtime roles after validating every ephemeral secret
+        run: npm run db:provision:postgres-logins
+        env:
+          DATABASE_URL: postgresql://postgres:ci-only-ephemeral@postgres:5432/tempocove_ci
+          TENANT_CONTEXT_SECRET: CI-Tenant-Context-Secret-0000000000001
+          TEMPOCOVE_APP_DB_PASSWORD: CI-App-Database-Password-00000000000001
+          TEMPOCOVE_WORKER_DB_PASSWORD: CI-Worker-Database-Password-0000000001
+          TEMPOCOVE_MONITOR_DB_PASSWORD: CI-Monitor-Database-Password-000000001
+          TEMPOCOVE_MIGRATION_DB_PASSWORD: CI-Migration-Database-Password-0000001
+      - run: npm run db:reset && DEMO_MODE=true DEMO_HOST_EMAIL=ci@example.invalid DEMO_HOST_PASSWORD='CI-Only!Password2026' npm run db:seed
+        env: { DATABASE_URL: "file:./dev.db", DATABASE_PROVIDER: sqlite }
+      - name: Import immutable SQLite snapshot into empty PostgreSQL
+        run: npm run db:import:sqlite-postgres
+        env:
+          NODE_ENV: test
+          POSTGRES_INSECURE_LOCAL_TEST: "true"
+          SQLITE_SOURCE_PATH: ${{ github.workspace }}/prisma/dev.db
+          CONFIRM_EMPTY_POSTGRES_IMPORT: "true"
+          DATABASE_URL: postgresql://tempocove_migration_login:CI-Migration-Database-Password-0000001@postgres:5432/tempocove_ci?sslmode=disable
+      - name: PostgreSQL owner guard and authority proofs
+        run: npm run ci:postgres-guards && npm run ci:postgres-authority && npm run ci:postgres-provision-negative && npm run ci:postgres-import-negative
+        env:
+          DATABASE_URL: postgresql://postgres:ci-only-ephemeral@postgres:5432/tempocove_ci?sslmode=disable
+          SQLITE_SOURCE_PATH: ${{ github.workspace }}/prisma/dev.db
+          NODE_ENV: test
+          POSTGRES_INSECURE_LOCAL_TEST: "true"
+      - name: PostgreSQL signed RLS direct-SQL proof
+        run: npm run ci:postgres-rls
+        env:
+          DATABASE_URL: postgresql://postgres:ci-only-ephemeral@postgres:5432/tempocove_ci?sslmode=disable
+          APP_DATABASE_URL: postgresql://tempocove_app_login:CI-App-Database-Password-00000000000001@postgres:5432/tempocove_ci?sslmode=disable
+          WORKER_DATABASE_URL: postgresql://tempocove_worker_login:CI-Worker-Database-Password-0000000001@postgres:5432/tempocove_ci?sslmode=disable
+          MONITOR_DATABASE_URL: postgresql://tempocove_monitor_login:CI-Monitor-Database-Password-000000001@postgres:5432/tempocove_ci?sslmode=disable
+          TENANT_CONTEXT_SECRET: CI-Tenant-Context-Secret-0000000000001
+      - name: PostgreSQL application transaction context and limiter proofs
+        run: npm run ci:postgres-app-context && npm run ci:postgres-runtime && npm run ci:postgres-rate-policies && npm run ci:postgres-service-dml && npm run ci:postgres-health
+        env:
+          CI: "true"
+          NODE_ENV: production
+          POSTGRES_INSECURE_LOCAL_TEST: "true"
+          DATABASE_PROVIDER: postgresql
+          DATABASE_ROLE: app
+          DATABASE_URL: postgresql://tempocove_app_login:CI-App-Database-Password-00000000000001@postgres:5432/tempocove_ci?sslmode=disable&connect_timeout=3&pool_timeout=20&connection_limit=20&statement_timeout=2000
+          PROOF_DATABASE_URL: postgresql://postgres:ci-only-ephemeral@postgres:5432/tempocove_ci?sslmode=disable
+          APP_DATABASE_URL: postgresql://tempocove_app_login:CI-App-Database-Password-00000000000001@postgres:5432/tempocove_ci?sslmode=disable
+          WORKER_DATABASE_URL: postgresql://tempocove_worker_login:CI-Worker-Database-Password-0000000001@postgres:5432/tempocove_ci?sslmode=disable&connect_timeout=3&pool_timeout=20&connection_limit=20&statement_timeout=2000
+          TENANT_CONTEXT_SECRET: CI-Tenant-Context-Secret-0000000000001
+          RATE_LIMIT_PROVIDER: postgresql
+          RATE_LIMIT_HASH_SECRET: CI-Rate-Limit-Hash-Secret-000000000001
+          EMAIL_TOKEN_SECRET: CI-Email-Token-Secret-000000000000001
+          AUTH_SECRET: CI-Auth-Secret-00000000000000000000001
+          BOOKING_CAPABILITY_KEY_ID: ci-capability-v1
+          BOOKING_CAPABILITY_SECRET: CI-Booking-Capability-Secret-000000000001
+          TOKEN_ENCRYPTION_KEY: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+          OUTBOX_WORKER_MODE: dedicated
+          EMAIL_TRANSPORT: smtp
+          SMTP_HOST: smtp.invalid
+          SMTP_PORT: "465"
+          SMTP_SECURE: "true"
+          SMTP_USER: ci-user
+          SMTP_PASSWORD: CI-Smtp-Password-000000000000000000001
+          CALENDAR_PROVIDER: local
+          PAYMENTS_PROVIDER: stripe
+          STRIPE_SECRET_KEY: sk_test_CIServiceHarness000000000000000
+          STRIPE_WEBHOOK_SECRET: ci_webhook_fixture
+          NEXT_PUBLIC_APP_URL: https://ci.tempocove.invalid/
+      - run: npm test && npm run typecheck && npm run lint && npm run worker:build && npm run build
+        env: { DATABASE_URL: "file:./dev.db", DATABASE_PROVIDER: sqlite }
+      - run: npm run ci:backup-contract && npm run ci:audit-policy
+      - run: CI_SECRET_SCAN_HISTORY=true npm run ci:secret-scan
+      - run: npm sbom --omit=dev --sbom-format cyclonedx > snagtime-sbom.cdx.json && node -e "const f=require('fs'),c=require('crypto'),b=f.readFileSync('snagtime-sbom.cdx.json');f.writeFileSync('snagtime-sbom.sha256',c.createHash('sha256').update(b).digest('hex')+'  snagtime-sbom.cdx.json\n')"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with: { name: snagtime-source-sbom, path: "snagtime-sbom.*", if-no-files-found: error }
+  image:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: docker build --build-arg BUILD_ID=${{ github.sha }} --target runtime --tag snagtime:${{ github.sha }} .
+      - run: docker build --target migration --tag snagtime-migration:${{ github.sha }} .
+      - run: docker run --rm --entrypoint /bin/sh snagtime-migration:${{ github.sha }} -c 'command -v psql >/dev/null && ! command -v node && ! find / -name "*prisma*" -print -quit 2>/dev/null | grep -q .'
+      - run: test "$(docker image inspect snagtime:${{ github.sha }} --format '{{.Config.User}}')" = "1000:1000"
+      - run: docker run --rm --entrypoint node snagtime:${{ github.sha }} scripts/runtime-dependency-check.mjs node_modules
+      - if: ${{ vars.TRIVY_IMAGE_SHA256 != '' }}
+        run: docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "aquasec/trivy@sha256:${TRIVY_IMAGE_SHA256}" image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed snagtime:${{ github.sha }}
+        env: { TRIVY_IMAGE_SHA256: "${{ vars.TRIVY_IMAGE_SHA256 }}" }
+      - run: docker inspect snagtime:${{ github.sha }} > snagtime-image-inspect.json && docker image inspect snagtime:${{ github.sha }} --format '{{.Id}}' > snagtime-image.sha256
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with: { name: snagtime-image-attestation-inputs, path: "snagtime-image*", if-no-files-found: error }
+  browser-and-axe:
+    runs-on: windows-2025
+    timeout-minutes: 35
+    env:
+      PLAYWRIGHT_ORGANIZER_EMAIL: organizer.e2e@example.com
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@1e60f620b9541d37b6307e4aef2ca4e35f3b3a79
+        with: { node-version: 24.15.0, cache: npm }
+      - run: npm ci --ignore-scripts
+      - run: npm run db:generate
+      - run: npx playwright install chromium
+      - run: npm run test:e2e
+      - if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with: { name: tempocove-playwright-failure-screenshots, path: runtime/playwright/artifacts/**/*.png, if-no-files-found: ignore, retention-days: 7 }
+  native-production-load:
+    if: github.event_name == 'workflow_dispatch' && inputs.native_pg_load
+    runs-on: [self-hosted, tempocove-native-load]
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@1e60f620b9541d37b6307e4aef2ca4e35f3b3a79
+        with: { node-version: 24.15.0, cache: npm }
+      - run: npm ci --ignore-scripts
+      - run: npm run db:generate:postgres
+      - id: load-fixture
+        run: node scripts/postgres-load-fixture.mjs
+        env:
+          LOAD_PROOF_DATABASE_URL: ${{ secrets.LOAD_PROOF_DATABASE_URL }}
+          LOAD_FIXTURE_TOKEN_ENCRYPTION_KEY: ${{ secrets.LOAD_FIXTURE_TOKEN_ENCRYPTION_KEY }}
+      - run: npm run test:load:postgres
+        env:
+          NODE_ENV: production
+          DATABASE_PROVIDER: postgresql
+          RATE_LIMIT_PROVIDER: postgresql
+          LOAD_BASE_URL: ${{ secrets.LOAD_BASE_URL }}
+          LOAD_DATABASE_URL: ${{ secrets.LOAD_DATABASE_URL }}
+          LOAD_WORKER_DATABASE_URL: ${{ secrets.LOAD_WORKER_DATABASE_URL }}
+          LOAD_PROOF_DATABASE_URL: ${{ secrets.LOAD_PROOF_DATABASE_URL }}
+          LOAD_EXPECTED_APP_ROLE: ${{ vars.LOAD_EXPECTED_APP_ROLE }}
+          LOAD_EXPECTED_WORKER_ROLE: ${{ vars.LOAD_EXPECTED_WORKER_ROLE }}
+          LOAD_EVENT_SLUG: ${{ steps.load-fixture.outputs.event_slug }}
+          LOAD_DURATION_ID: ${{ steps.load-fixture.outputs.duration_id }}
+          LOAD_SECOND_EVENT_SLUG: ${{ steps.load-fixture.outputs.second_event_slug }}
+          LOAD_SECOND_DURATION_ID: ${{ steps.load-fixture.outputs.second_duration_id }}
+          LOAD_MISSING_EVENT_SLUG: ${{ steps.load-fixture.outputs.missing_event_slug }}
+          LOAD_MISSING_DURATION_ID: ${{ steps.load-fixture.outputs.missing_duration_id }}
+          LOAD_START_AT: ${{ steps.load-fixture.outputs.start_at }}
+          LOAD_HARDWARE_LABEL: ${{ vars.LOAD_HARDWARE_LABEL }}
+          LOAD_PROXY_SHARED_SECRET: ${{ secrets.LOAD_PROXY_SHARED_SECRET }}
+          LOAD_OPERATOR_SECRET: ${{ secrets.LOAD_OPERATOR_SECRET }}
+          LOAD_EXPECTED_BUILD_ID: ${{ github.sha }}

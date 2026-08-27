@@ -1,0 +1,10 @@
+{
+  "owner": "TempoCove infrastructure owner",
+  "expires": "2026-09-30",
+  "disposition": "The locked install retains an optional Prisma CLI/config tooling chain for migrations and CI. The production image removes that chain after pruning and executes a filesystem assertion that it is absent before release. Re-evaluate on every lockfile change and upgrade when Prisma publishes a non-breaking fixed line.",
+  "packages": ["@prisma/config", "deepmerge-ts", "effect", "prisma"],
+  "advisories": [
+    "https://github.com/advisories/GHSA-38f7-945m-qr2g",
+    "https://github.com/advisories/GHSA-ggr8-5vv4-36mx"
+  ]
+}

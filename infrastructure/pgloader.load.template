@@ -1,0 +1,12 @@
+LOAD DATABASE
+  FROM sqlite:///ABSOLUTE_PATH_TO_SOURCE_DEV_DB
+  INTO postgresql://APPROVED_MIGRATION_ROLE@HOST:5432/TARGET_DATABASE
+WITH include drop, create no tables, create no indexes, reset sequences, data only,
+     workers = 1, concurrency = 1, batch rows = 1000,
+     quote identifiers
+SET work_mem to '16MB', maintenance_work_mem to '64MB';
+
+-- Operator contract: migrate schema first, take the SQLite source offline, bind both
+-- source SHA-256 and target migration SHA-256, run pgloader with secrets supplied by
+-- its protected environment, then execute scripts/postgres-restore-verify.sql and
+-- compare per-table counts. Never run against a writable source or nonempty target.

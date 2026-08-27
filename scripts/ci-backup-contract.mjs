@@ -1,0 +1,5 @@
+import { readFileSync } from "node:fs";
+const backup=readFileSync("scripts/backup-postgres.ps1","utf8"),restore=readFileSync("scripts/restore-postgres.ps1","utf8"),verify=readFileSync("scripts/postgres-restore-verify.sql","utf8");
+for(const [name,source,tokens] of [["backup",backup,["PGSSLMODE='verify-full'","PGSSLROOTCERT","AesGcm","TCOVE-PG18-AESGCM-1","ConvertTo-Json -Compress","Remove-Item -LiteralPath $plain"]],["restore",restore,["PGSSLMODE='verify-full'","PGSSLROOTCERT","AesGcm","ExpectedSha256","ConfirmIsolatedEmptyTarget","postgres-restore-verify.sql","ConvertTo-Json -Compress","Remove-Item -LiteralPath $temp"]],["verification",verify,["server_version_num","membership_last_owner_guard","email_outbox_snapshot_immutable","Workspace","Booking","EmailOutbox","IntegrationOutbox"]]])for(const token of tokens)if(!source.includes(token))throw new Error(`${name} contract missing ${token}`);
+if(/Write-(?:Host|Output)|echo\s/i.test(backup+restore))throw new Error("backup or restore has an unstructured stdout path");
+console.log("Encrypted verified-TLS backup, isolated restore, JSON-only output, cleanup, and authority reconciliation source contract passed.");

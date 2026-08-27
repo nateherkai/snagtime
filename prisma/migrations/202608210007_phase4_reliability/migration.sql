@@ -1,0 +1,1 @@
+ALTER TABLE "CustomQuestion" ADD COLUMN "isActive" BOOLEAN NOT NULL DEFAULT true;

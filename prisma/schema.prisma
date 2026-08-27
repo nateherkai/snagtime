@@ -1,0 +1,520 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                   String                @id @default(cuid())
+  email                String                @unique
+  name                 String
+  imageUrl             String?
+  timeZone             String                @default("America/Chicago")
+  passwordHash         String
+  emailVerifiedAt      DateTime?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  eventTypes           EventType[]
+  availabilitySchedules AvailabilitySchedule[]
+  hostedBookings       Booking[]             @relation("BookingHost")
+  oauthConnections     OAuthConnection[]
+  authSessions         AuthSession[]
+  oauthStates          OAuthState[]
+  createdBrandings     WorkspaceBranding[]
+  availabilityOverrides AvailabilityOverride[]
+  memberships          Membership[]
+  invitationsSent      WorkspaceInvitation[] @relation("InvitationSender")
+  accountActionTokens  AccountActionToken[]
+}
+
+model Workspace {
+  id                    String                 @id @default(cuid())
+  name                  String
+  timeZone              String                 @default("America/Chicago")
+  onboardingCompletedAt DateTime?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  memberships           Membership[]
+  invitations           WorkspaceInvitation[]
+  eventTypes            EventType[]
+  bookings              Booking[]
+  availabilitySchedules AvailabilitySchedule[]
+  availabilityOverrides AvailabilityOverride[]
+  branding              WorkspaceBranding?
+  oauthConnections      OAuthConnection[]
+  oauthStates           OAuthState[]
+  authSessions          AuthSession[]
+  outboxEffects         IntegrationOutbox[]
+  occupancies           BookingOccupancy[]
+  emailOutbox           EmailOutbox[]
+  localInboxMessages    LocalInboxMessage[]
+  accountActionTokens   AccountActionToken[]
+  bookingRecoveryTokens BookingRecoveryToken[]
+}
+
+model Membership {
+  id          String        @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        String        @default("MEMBER")
+  status      String        @default("ACTIVE")
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  authSessions AuthSession[]
+
+  @@unique([workspaceId, userId])
+  @@unique([id, workspaceId])
+  @@index([userId, status])
+}
+
+model WorkspaceInvitation {
+  id          String    @id @default(cuid())
+  workspaceId String
+  email       String
+  role        String    @default("MEMBER")
+  status      String    @default("PENDING")
+  invitedById String
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  acceptedById String?
+  tokenHash   String?   @unique
+  tokenVersion Int      @default(0)
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  invitedBy   User      @relation("InvitationSender", fields: [invitedById], references: [id], onDelete: Restrict)
+
+  @@unique([workspaceId, email, status])
+  @@index([email, status])
+}
+
+model EventType {
+  id                   String    @id @default(cuid())
+  workspaceId          String
+  ownerId              String
+  name                 String
+  slug                 String    @unique
+  description          String?
+  durationMinutes      Int       @default(30)
+  color                String    @default("#6D5EF5")
+  locationType         String    @default("GOOGLE_MEET")
+  locationValue        String?
+  isActive             Boolean   @default(true)
+  bufferBeforeMinutes  Int       @default(0)
+  bufferAfterMinutes   Int       @default(0)
+  minimumNoticeMinutes Int       @default(120)
+  bookingWindowDays    Int       @default(60)
+  priceCents           Int       @default(0)
+  currency             String    @default("usd")
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  owner                User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  workspace            Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  bookings             Booking[]
+  durations            EventDuration[]
+  questions            CustomQuestion[]
+
+  @@index([workspaceId, isActive])
+  @@index([ownerId, isActive])
+}
+
+model EventDuration {
+  id              String    @id @default(cuid())
+  eventTypeId     String
+  label           String
+  durationMinutes Int
+  isDefault       Boolean   @default(false)
+  isActive        Boolean   @default(true)
+  priceCents      Int       @default(0)
+  currency        String    @default("usd")
+  position        Int       @default(0)
+  eventType       EventType @relation(fields: [eventTypeId], references: [id], onDelete: Cascade)
+  bookings        Booking[]
+
+  @@index([eventTypeId, position])
+}
+
+model CustomQuestion {
+  id          String          @id @default(cuid())
+  eventTypeId String
+  label       String
+  kind        String          @default("TEXT")
+  required    Boolean         @default(false)
+  optionsJson String?
+  position    Int             @default(0)
+  isActive    Boolean         @default(true)
+  eventType   EventType       @relation(fields: [eventTypeId], references: [id], onDelete: Cascade)
+  answers     BookingAnswer[]
+
+  @@index([eventTypeId, position])
+}
+
+model AvailabilitySchedule {
+  id        String                 @id @default(cuid())
+  workspaceId String
+  userId    String
+  timeZone  String                 @default("America/Chicago")
+  createdAt DateTime               @default(now())
+  updatedAt DateTime               @updatedAt
+  user      User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  intervals AvailabilityInterval[]
+
+  @@unique([workspaceId, userId])
+}
+
+model AvailabilityInterval {
+  id         String               @id @default(cuid())
+  scheduleId String
+  dayOfWeek  Int
+  startMinute Int
+  endMinute  Int
+  schedule   AvailabilitySchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@index([scheduleId, dayOfWeek])
+}
+
+model AvailabilityOverride {
+  id          String   @id @default(cuid())
+  workspaceId String
+  userId      String
+  dateKey     String
+  isAvailable Boolean  @default(false)
+  startMinute Int?
+  endMinute   Int?
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, userId, dateKey])
+}
+
+model WorkspaceBranding {
+  id          String   @id @default(cuid())
+  workspaceId String   @unique
+  userId      String
+  workspaceName String
+  logoUrl     String?
+  accentColor String   @default("#6D5EF5")
+  description String?
+  footerText  String?
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model Booking {
+  id                      String    @id @default(cuid())
+  workspaceId             String
+  eventTypeId             String
+  hostId                  String
+  durationId              String?
+  durationMinutes         Int
+  priceCents              Int       @default(0)
+  currency                String    @default("usd")
+  bufferBeforeMinutes     Int       @default(0)
+  bufferAfterMinutes      Int       @default(0)
+  bookingWindowDays       Int       @default(60)
+  inviteeName             String
+  inviteeEmail            String
+  inviteeTimeZone         String
+  startAt                 DateTime
+  endAt                   DateTime
+  status                  String    @default("CONFIRMED")
+  notes                   String?
+  calendarSyncStatus      String    @default("LOCAL")
+  externalCalendarEventId String?
+  externalCalendarEventEtag String?
+  stripeCheckoutSessionId String?   @unique
+  stripeCheckoutUrl       String?
+  checkoutResumeExpiresAt DateTime?
+  stripePaymentStatus     String?
+  stripePaymentIntentId   String?   @unique
+  stripeChargeId          String?   @unique
+  stripeRefundId          String?   @unique
+  refundStatus            String    @default("NOT_REQUIRED")
+  refundedAmountCents     Int       @default(0)
+  refundFailureCode       String?
+  cancellationReason      String?
+  eventTitleSnapshot      String    @default("")
+  locationTypeSnapshot    String    @default("CUSTOM")
+  locationValueSnapshot   String?
+  calendarProviderSnapshot String   @default("local")
+  notificationStatus      String   @default("LOCAL_NO_EMAIL")
+  mutationVersion         Int      @default(0)
+  calendarLeaseToken      String?
+  calendarLeaseExpiresAt  DateTime?
+  idempotencyKey          String?
+  requestFingerprint      String?
+  capabilityVersion      String    @default("")
+  capabilityKeyId        String    @default("legacy-auth-v1")
+  manageExpiresAt        DateTime  @default(now())
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+  eventType               EventType @relation(fields: [eventTypeId], references: [id], onDelete: Restrict)
+  workspace               Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  host                    User      @relation("BookingHost", fields: [hostId], references: [id], onDelete: Restrict)
+  duration                EventDuration? @relation(fields: [durationId], references: [id], onDelete: SetNull)
+  answers                 BookingAnswer[]
+  occupancies             BookingOccupancy[]
+  capabilities            BookingCapability[]
+  outboxEffects           IntegrationOutbox[]
+  manageSessions          BookingManageSession[]
+  recoveryTokens          BookingRecoveryToken[]
+  emailOutbox             EmailOutbox[]
+
+  @@index([workspaceId, startAt, endAt])
+  @@index([hostId, startAt, endAt])
+  @@index([eventTypeId, startAt])
+  @@unique([workspaceId, eventTypeId, idempotencyKey])
+}
+
+model BookingAnswer {
+  id            String         @id @default(cuid())
+  bookingId     String
+  questionId    String?
+  questionLabel String
+  valueJson     String
+  booking       Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  question      CustomQuestion? @relation(fields: [questionId], references: [id], onDelete: SetNull)
+
+  @@index([bookingId])
+}
+
+model BookingOccupancy {
+  id          String   @id @default(cuid())
+  workspaceId String
+  bookingId   String
+  hostId      String
+  minuteStart DateTime
+  booking     Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, hostId, minuteStart])
+  @@index([bookingId])
+}
+
+model BookingCapability {
+  id        String    @id @default(cuid())
+  bookingId String
+  scope     String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  booking   Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId, scope, expiresAt])
+}
+
+model BookingManageSession {
+  id        String    @id @default(cuid())
+  bookingId String
+  tokenHash String    @unique
+  scopes    String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  acknowledgedAt DateTime?
+  booking   Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId, expiresAt])
+}
+
+model IntegrationOutbox {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  bookingId      String
+  kind           String
+  status         String    @default("PENDING")
+  idempotencyKey String    @unique
+  attemptCount   Int       @default(0)
+  nextAttemptAt  DateTime  @default(now())
+  lastErrorCode  String?
+  leaseToken     String?
+  leaseExpiresAt DateTime?
+  bookingMutationVersion Int?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  booking        Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
+  @@index([leaseExpiresAt])
+}
+
+model AccountActionToken {
+  id          String    @id
+  workspaceId String
+  userId      String
+  purpose     String
+  email       String
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose, expiresAt])
+  @@index([workspaceId, purpose])
+}
+
+model BookingRecoveryToken {
+  id          String    @id
+  workspaceId String
+  bookingId   String
+  email       String
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  booking     Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId, expiresAt])
+  @@index([workspaceId, email])
+}
+
+model EmailOutbox {
+  id                     String    @id @default(cuid())
+  workspaceId            String
+  bookingId              String?
+  kind                    String
+  recipientEmail         String
+  subjectSnapshot        String
+  payloadJson             String
+  bookingMutationVersion Int?
+  status                  String    @default("PENDING")
+  idempotencyKey          String    @unique
+  attemptCount            Int       @default(0)
+  nextAttemptAt           DateTime  @default(now())
+  leaseToken              String?
+  leaseExpiresAt          DateTime?
+  lastErrorCode           String?
+  completedAt             DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+  workspace               Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  booking                 Booking?  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  localMessage            LocalInboxMessage?
+
+  @@index([status, nextAttemptAt])
+  @@index([workspaceId, status])
+  @@index([leaseExpiresAt])
+}
+
+model LocalInboxMessage {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  outboxId       String    @unique
+  recipientEmail String
+  subject        String
+  encryptedText  String
+  createdAt      DateTime  @default(now())
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  outbox          EmailOutbox @relation(fields: [outboxId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt])
+}
+
+model AuthSession {
+  id        String    @id @default(cuid())
+  userId    String
+  activeWorkspaceId String
+  membershipId String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [activeWorkspaceId], references: [id], onDelete: Cascade)
+  membership Membership @relation(fields: [membershipId, activeWorkspaceId], references: [id, workspaceId], onDelete: Cascade)
+  oauthStates OAuthState[]
+
+  @@index([userId, expiresAt])
+}
+
+model OAuthState {
+  id           String    @id
+  userId       String
+  workspaceId  String
+  authSessionId String?
+  codeVerifier String
+  nonce        String
+  processingToken String?
+  processingExpiresAt DateTime?
+  expectedConnectionId String?
+  expectedConnectionGeneration Int?
+  expiresAt    DateTime
+  consumedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  authSession  AuthSession? @relation(fields: [authSessionId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([authSessionId, expiresAt])
+  @@index([expectedConnectionId])
+}
+
+model OAuthConnection {
+  id           String   @id @default(cuid())
+  userId       String
+  workspaceId  String
+  provider     String
+  providerUserId String?
+  accessToken  String?
+  refreshToken String?
+  expiresAt    DateTime?
+  scope        String?
+  calendarId   String   @default("primary")
+  disconnectStatus String @default("ACTIVE")
+  disconnectRetryAt DateTime?
+  disconnectLeaseToken String?
+  disconnectLeaseExpiresAt DateTime?
+  disconnectErrorCode String?
+  credentialGeneration Int @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, provider])
+  @@index([userId, provider])
+  @@index([disconnectStatus, disconnectRetryAt])
+  @@index([disconnectStatus, disconnectLeaseExpiresAt])
+}
+
+model WebhookEvent {
+  id          String   @id
+  provider    String
+  eventType   String
+  payloadHash String
+  processedAt DateTime @default(now())
+
+  @@unique([provider, id])
+}
+
+model RateLimitBucket {
+  keyHash     String   @id
+  count       Int      @default(0)
+  windowEnd   DateTime
+  updatedAt   DateTime @updatedAt
+
+  @@index([windowEnd])
+}
+
+model WorkerHeartbeat {
+  workerId   String   @id
+  startedAt  DateTime @default(now())
+  lastSeenAt DateTime
+  status     String   @default("STARTING")
+  buildId    String
+
+  @@index([lastSeenAt])
+}

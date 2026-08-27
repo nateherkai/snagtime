@@ -1,0 +1,1 @@
+ALTER TABLE "Booking" ADD COLUMN "notificationStatus" TEXT NOT NULL DEFAULT 'LOCAL_NO_EMAIL';
