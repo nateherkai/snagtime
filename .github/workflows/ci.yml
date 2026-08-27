@@ -125,7 +125,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with: { name: snagtime-image-attestation-inputs, path: "snagtime-image*", if-no-files-found: error }
   browser-and-axe:
-    runs-on: windows-2025
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     env:
       PLAYWRIGHT_ORGANIZER_EMAIL: organizer.e2e@example.com
@@ -135,7 +135,7 @@ jobs:
         with: { node-version: 24.15.0, cache: npm }
       - run: npm ci --ignore-scripts
       - run: npm run db:generate
-      - run: npx playwright install chromium
+      - run: npx playwright install --with-deps chromium msedge
       - run: npm run test:e2e
       - if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
