@@ -39,6 +39,7 @@ try{
   const membership=await proof.membership.create({data:{workspaceId,userId,role:"OWNER",status:"ACTIVE"}});
   const sessionHash=`service-session-${suffix}`;await proof.authSession.create({data:{userId,activeWorkspaceId:workspaceId,membershipId:membership.id,tokenHash:sessionHash,expiresAt:new Date("2099-01-01T00:00:00Z")}});
   await proof.workspaceBranding.create({data:{workspaceId,userId,workspaceName:"Service DML",accentColor:"#123456"}});
+  await proof.oAuthConnection.create({data:{workspaceId,userId,provider:"google",providerUserId:`service-proof-${suffix}`,refreshToken:"encrypted-service-proof",disconnectStatus:"ACTIVE"}});
   const schedule=await proof.availabilitySchedule.create({data:{workspaceId,userId,timeZone:"UTC"}});
   await proof.availabilityInterval.createMany({data:Array.from({length:7},(_,dayOfWeek)=>({scheduleId:schedule.id,dayOfWeek,startMinute:0,endMinute:1440}))});
   await proof.eventType.create({data:{id:eventId,workspaceId,ownerId:userId,name:"Service free",slug:`service-free-${suffix}`,durationMinutes:30,minimumNoticeMinutes:0,bookingWindowDays:30,isActive:true}});

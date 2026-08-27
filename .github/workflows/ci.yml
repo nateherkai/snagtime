@@ -87,11 +87,14 @@ jobs:
           SMTP_SECURE: "true"
           SMTP_USER: ci-user
           SMTP_PASSWORD: CI-Smtp-Password-000000000000000000001
-          CALENDAR_PROVIDER: local
+          CALENDAR_PROVIDER: google
+          GOOGLE_CLIENT_ID: ci-proof.apps.googleusercontent.com
+          GOOGLE_CLIENT_SECRET: CI-Google-Client-Secret-000000000000001
+          TEMPOCOVE_PROVIDER_PROOF_MODE: "true"
           PAYMENTS_PROVIDER: stripe
           STRIPE_SECRET_KEY: sk_test_CIServiceHarness000000000000000
           STRIPE_WEBHOOK_SECRET: ci_webhook_fixture
-          NEXT_PUBLIC_APP_URL: https://ci.tempocove.invalid/
+          NEXT_PUBLIC_APP_URL: http://localhost:3000/
       - run: npm test && npm run typecheck && npm run lint && npm run worker:build && npm run build
         env: { DATABASE_URL: "file:./dev.db", DATABASE_PROVIDER: sqlite }
       - run: npm run ci:backup-contract && npm run ci:audit-policy
