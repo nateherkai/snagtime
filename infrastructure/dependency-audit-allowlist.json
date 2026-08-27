@@ -1,7 +1,7 @@
 {
   "owner": "SnagTime infrastructure owner",
   "expires": "2026-09-30",
-  "disposition": "The locked production dependency graph has no reviewed vulnerability exceptions. Re-evaluate on every lockfile change.",
+  "disposition": "The locked production dependency graph has no reviewed vulnerability exceptions. The production image removes the optional migration and build-tooling chain after pruning and verifies that exclusion before release. Re-evaluate on every lockfile change.",
   "packages": [],
   "advisories": []
 }
