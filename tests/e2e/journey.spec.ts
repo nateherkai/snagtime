@@ -5,6 +5,16 @@ import { assertNoClientSecretState, assertNoHorizontalOverflow, attachSession, b
 // failure artifact can never contain a request or response carrying an authority.
 test.use({ trace: "off" });
 
+async function waitForCalendarSync(bookingId: string) {
+  const deadline = Date.now() + 5_000;
+  do {
+    const booking = await db.booking.findUnique({ where: { id: bookingId }, select: { calendarLeaseToken: true, calendarSyncStatus: true } });
+    if (booking && booking.calendarLeaseToken === null && booking.calendarSyncStatus !== "PENDING") return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  } while (Date.now() < deadline);
+  throw new Error("The booking calendar update did not settle within the bounded wait.");
+}
+
 test("@journey signup, verification, onboarding, scheduling, recovery and tenant isolation", async ({ page, context }, testInfo) => {
   const suffix = testInfo.project.name.replaceAll(/[^a-z0-9]/gi, "-").toLowerCase();
   const accountEmail = `account-${suffix}@example.com`;
@@ -69,6 +79,7 @@ test("@journey signup, verification, onboarding, scheduling, recovery and tenant
     const next = slots.data.find((slot) => slot.start !== managed.startAt); if (!next) throw new Error("No reschedule slot was available.");
     const rescheduled = await untracedJson(`/api/bookings/${managed.id}`, { method: "PATCH", headers: { Cookie: managed.cookie }, body: JSON.stringify({ startAt: next.start }) });
     expect((await rescheduled.json() as { data: { startAt: string } }).data.startAt).toBe(next.start); managed.startAt = next.start;
+    await waitForCalendarSync(managed.id);
   }
   await untracedJson("/api/bookings/manage-link", { method: "POST", body: JSON.stringify({ bookingId: managed.id, email: `invitee-${suffix}@example.com` }) });
   await page.request.post("/api/integrations/email/inbox");
