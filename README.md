@@ -21,6 +21,18 @@ SnagTime gives you the source code for your own scheduling system. You can run i
 - Custom workspace branding, accent colors, profile images, and uploaded logos
 - SQLite for the local demo and a hardened PostgreSQL production architecture
 
+## Set it up with Codex or Claude Code
+
+You can give an AI coding assistant this repository URL and have it handle the local installation while it pauses for the account steps only you can complete.
+
+Open [AI-assisted setup](docs/AI-SETUP.md), copy the student prompt, and paste it into Codex or Claude Code with this repository link:
+
+```text
+https://github.com/nateherkai/snagtime
+```
+
+The guide separates the credential-free local demo, optional integrations, and advanced public deployment so the assistant does not pull you into infrastructure work before the app runs locally.
+
 ## Five-minute local setup
 
 ### Requirements
@@ -100,6 +112,7 @@ Google OAuth credentials can be created without paying SnagTime. Stripe test mod
 
 ```bash
 npm run setup          # Create .env.local and local credentials
+npm run setup:check    # Validate the credential-free local configuration
 npm run demo:free      # Install, migrate, seed, and run the free local demo
 npm run dev            # Run the configured local development server
 npm run test           # Run the unit and contract test suite

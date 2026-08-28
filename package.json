@@ -15,6 +15,7 @@
   ],
   "scripts": {
     "setup": "node scripts/setup-local.mjs",
+    "setup:check": "node scripts/demo-check.mjs --free",
     "dev": "dotenv -e .env.local -- npm run dev --workspace @snagtime/web",
     "dev:persistent": "node scripts/dev-persistent.mjs",
     "dev:persistent:stop": "node scripts/dev-persistent.mjs --stop",
