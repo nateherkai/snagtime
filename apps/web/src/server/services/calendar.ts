@@ -4,7 +4,7 @@ import { CodeChallengeMethod } from "google-auth-library";
 import { google } from "googleapis";
 import { DateTime } from "luxon";
 import { db } from "@/server/db";
-import { currentDatabaseContext, enterDatabaseAction } from "@/server/db-context";
+import { currentDatabaseContext, enterDatabaseAction, runWithDatabaseContext, runWithWorkspaceRead } from "@/server/db-context";
 import { decryptToken, encryptToken } from "@/server/crypto/tokens";
 import { AppError } from "@/server/errors";
 import type { BusyInterval } from "@/server/services/availability";
@@ -126,10 +126,13 @@ const prismaCredentialStore: GoogleCredentialStore = {
       const stored = rows[0];
       return stored ? { id: stored.connection_id, workspaceId: stored.workspace_id, userId: stored.credential_user_id, accessToken: decryptToken(stored.access_token), refreshToken: decryptToken(stored.refresh_token), expiresAt: stored.expires_at, calendarId: stored.calendar_id, credentialGeneration: stored.credential_generation, disconnectStatus: stored.disconnect_status } : null;
     }
-    if (!workspaceId || !await liveWorkspaceMember(userId, workspaceId)) throw new Error("GOOGLE_WORKSPACE_AUTHORITY_REQUIRED");
-    const stored = await db.oAuthConnection.findUnique({ where: { workspaceId_provider: { workspaceId, provider: "google" } } });
-    if (stored && !await liveWorkspaceMember(stored.userId, workspaceId, "ADMIN")) throw new Error("GOOGLE_CREDENTIAL_OWNER_NOT_ACTIVE");
-    return stored ? { ...stored, accessToken: decryptToken(stored.accessToken), refreshToken: decryptToken(stored.refreshToken) } : null;
+    if (!workspaceId) throw new Error("GOOGLE_WORKSPACE_AUTHORITY_REQUIRED");
+    return runWithWorkspaceRead(userId, workspaceId, async () => {
+      if (!await liveWorkspaceMember(userId, workspaceId)) throw new Error("GOOGLE_WORKSPACE_AUTHORITY_REQUIRED");
+      const stored = await db.oAuthConnection.findUnique({ where: { workspaceId_provider: { workspaceId, provider: "google" } } });
+      if (stored && !await liveWorkspaceMember(stored.userId, workspaceId, "ADMIN")) throw new Error("GOOGLE_CREDENTIAL_OWNER_NOT_ACTIVE");
+      return stored ? { ...stored, accessToken: decryptToken(stored.accessToken), refreshToken: decryptToken(stored.refreshToken) } : null;
+    });
   },
 };
 
@@ -142,10 +145,20 @@ export async function persistRefreshedGoogleTokens(userId: string, source: { kin
     if (rows[0]?.saved) clearGoogleScopeHealthCache(source.workspaceId);
     return rows[0]?.saved === true;
   }
-  if (!await liveWorkspaceMember(userId, source.workspaceId) || !await liveWorkspaceMember(source.credentialUserId, source.workspaceId, "ADMIN")) return false;
-  const saved = await db.oAuthConnection.updateMany({ where: { id: source.connectionId, workspaceId: source.workspaceId, userId: source.credentialUserId, provider: "google", disconnectStatus: "ACTIVE", credentialGeneration: source.credentialGeneration }, data: { accessToken: tokens.accessToken ? encryptToken(tokens.accessToken) : undefined, refreshToken: tokens.refreshToken ? encryptToken(tokens.refreshToken) : undefined, expiresAt: tokens.expiresAt } });
-  if (saved.count === 1) clearGoogleScopeHealthCache(source.workspaceId);
-  return saved.count === 1;
+  const current = currentDatabaseContext();
+  return runWithDatabaseContext({
+    mode: current?.mode === "public" ? "public" : "workspace",
+    workspaceId: source.workspaceId,
+    userId: source.credentialUserId,
+    sessionHash: current?.sessionHash,
+    subject: current?.subject || "ADMIN",
+    action: "oauth_write",
+  }, async () => {
+    if (!await liveWorkspaceMember(userId, source.workspaceId) || !await liveWorkspaceMember(source.credentialUserId, source.workspaceId, "ADMIN")) return false;
+    const saved = await db.oAuthConnection.updateMany({ where: { id: source.connectionId, workspaceId: source.workspaceId, userId: source.credentialUserId, provider: "google", disconnectStatus: "ACTIVE", credentialGeneration: source.credentialGeneration }, data: { accessToken: tokens.accessToken ? encryptToken(tokens.accessToken) : undefined, refreshToken: tokens.refreshToken ? encryptToken(tokens.refreshToken) : undefined, expiresAt: tokens.expiresAt } });
+    if (saved.count === 1) clearGoogleScopeHealthCache(source.workspaceId);
+    return saved.count === 1;
+  });
 }
 
 export class GoogleCalendarService implements CalendarService {
@@ -172,11 +185,13 @@ export class GoogleCalendarService implements CalendarService {
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
     if (!clientId || !clientSecret) throw new Error("Google Calendar credentials are not configured.");
     const auth = new google.auth.OAuth2(clientId, clientSecret, `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/integrations/google/callback`);
-    const { tokens } = await auth.getToken({ code, codeVerifier });
+    let tokens;
+    try { ({ tokens } = await auth.getToken({ code, codeVerifier })); }
+    catch { throw new AppError("INVALID_OAUTH_CALLBACK", "Google authorization expired or was already used. Start again from Integrations.", 400); }
     assertRequiredGoogleScopes(tokens.scope);
-    if (!tokens.id_token) throw new Error("Google did not return a verifiable identity token.");
+    if (!tokens.id_token) throw new AppError("INVALID_OAUTH_CALLBACK", "Google did not return a verifiable identity token. Start again from Integrations.", 400);
     const ticket = await auth.verifyIdToken({ idToken: tokens.id_token, audience: clientId }); const identity = ticket.getPayload();
-    if (!identity?.sub || identity.nonce !== nonce) throw new Error("Google identity nonce or subject did not match the authorization request.");
+    if (!identity?.sub || identity.nonce !== nonce) throw new AppError("INVALID_OAUTH_CALLBACK", "Google identity did not match the authorization request. Start again from Integrations.", 400);
     return { accessToken: tokens.access_token, refreshToken: tokens.refresh_token, expiresAt: tokens.expiry_date ? new Date(tokens.expiry_date) : null, providerUserId: identity.sub, scope: tokens.scope! };
   }
 
@@ -186,6 +201,7 @@ export class GoogleCalendarService implements CalendarService {
     if (!clientId || !clientSecret) throw new Error("Google Calendar credentials are not configured.");
     const stored = await this.credentials.get(userId, workspaceId);
     if (stored && stored.disconnectStatus !== "ACTIVE") throw new Error("GOOGLE_CREDENTIAL_NOT_ACTIVE");
+    if (stored?.workspaceId) enterDatabaseAction("oauth_write", { workspaceId: stored.workspaceId, userId: stored.userId, subject: "ADMIN" });
     const source = stored?.refreshToken ? { kind: "database" as const, connectionId: stored.id, workspaceId: stored.workspaceId, credentialUserId: stored.userId, credentialGeneration: stored.credentialGeneration } : { kind: "environment" as const };
     const refreshToken = source.kind === "database" ? stored!.refreshToken : workspaceId && environmentGoogleCredentialAllowed(workspaceId) ? process.env.GOOGLE_REFRESH_TOKEN : undefined;
     if (!refreshToken) throw new Error("Google Calendar refresh token is not configured.");
@@ -343,32 +359,51 @@ export function isProviderNotFound(error: unknown) { return typeof error === "ob
 
 async function credentialWorkspace(userId: string, workspaceId?: string) {
   if (!workspaceId) throw new AppError("WORKSPACE_CONTEXT_REQUIRED", "A workspace-bound calendar operation is required.", 400);
-  if (!await liveWorkspaceMember(userId, workspaceId)) throw new AppError("FORBIDDEN", "You no longer have access to this workspace calendar.", 403);
-  return workspaceId;
+  return runWithWorkspaceRead(userId, workspaceId, async () => {
+    if (!await liveWorkspaceMember(userId, workspaceId)) throw new AppError("FORBIDDEN", "You no longer have access to this workspace calendar.", 403);
+    return workspaceId;
+  });
 }
 
-export async function googleCredentialsReady(userId: string, workspaceId?: string) {
-  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) return false;
-  const projected = await publicGoogleReady();
-  if (projected !== null) return projected && Boolean(process.env.TOKEN_ENCRYPTION_KEY);
-  const resolvedWorkspaceId = await credentialWorkspace(userId, workspaceId);
+async function googleCredentialsReadyWithin(userId: string, resolvedWorkspaceId: string) {
   const connection = await db.oAuthConnection.findUnique({ where: { workspaceId_provider: { workspaceId: resolvedWorkspaceId, provider: "google" } }, select: { userId: true, refreshToken: true, disconnectStatus: true } });
   if (connection && !await liveWorkspaceMember(connection.userId, resolvedWorkspaceId, "ADMIN")) return false;
   if (connection?.disconnectStatus !== undefined && connection.disconnectStatus !== "ACTIVE") return false;
   if (connection?.refreshToken) return Boolean(process.env.TOKEN_ENCRYPTION_KEY);
   return environmentGoogleCredentialAllowed(resolvedWorkspaceId);
 }
+export async function googleCredentialsReady(userId: string, workspaceId?: string) {
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) return false;
+  const projected = await publicGoogleReady();
+  if (projected !== null) return projected && Boolean(process.env.TOKEN_ENCRYPTION_KEY);
+  const resolvedWorkspaceId = await credentialWorkspace(userId, workspaceId);
+  return runWithWorkspaceRead(userId, resolvedWorkspaceId, () => googleCredentialsReadyWithin(userId, resolvedWorkspaceId));
+}
 
 export function clearGoogleScopeHealthCache(workspaceId?: string) { if (workspaceId) googleScopeHealthCache.delete(workspaceId); else googleScopeHealthCache.clear(); }
 export async function getGoogleScopeHealth(userId: string, scopeProbe?: () => Promise<GoogleScopeHealth>, now = Date.now(), workspaceId?: string): Promise<GoogleScopeHealth> {
-  const resolvedWorkspaceId = publicGoogleEventId() ? workspaceId : await credentialWorkspace(userId, workspaceId);
-  if (!resolvedWorkspaceId) throw new AppError("WORKSPACE_CONTEXT_REQUIRED", "A workspace-bound calendar operation is required.", 400);
-  if (!await googleCredentialsReady(userId, resolvedWorkspaceId)) { googleScopeHealthCache.delete(resolvedWorkspaceId); return { scopeHealth: "unavailable", missingScopes: [...REQUIRED_GOOGLE_CALENDAR_SCOPES] }; }
+  if (publicGoogleEventId()) {
+    if (!workspaceId) throw new AppError("WORKSPACE_CONTEXT_REQUIRED", "A workspace-bound calendar operation is required.", 400);
+    return getGoogleScopeHealthWithin(userId, workspaceId, scopeProbe, now);
+  }
+  const resolvedWorkspaceId = await credentialWorkspace(userId, workspaceId);
+  return runWithWorkspaceRead(userId, resolvedWorkspaceId, () => getGoogleScopeHealthWithin(userId, resolvedWorkspaceId, scopeProbe, now));
+}
+async function getGoogleScopeHealthWithin(userId: string, resolvedWorkspaceId: string, scopeProbe: (() => Promise<GoogleScopeHealth>) | undefined, now: number): Promise<GoogleScopeHealth> {
+  if (!await googleCredentialsReady(userId, resolvedWorkspaceId)) {
+    console.error("Google credentials not ready", { hasContext: Boolean(currentDatabaseContext()) });
+    googleScopeHealthCache.delete(resolvedWorkspaceId); return { scopeHealth: "unavailable", missingScopes: [...REQUIRED_GOOGLE_CALENDAR_SCOPES] };
+  }
   if (providerProofMode()) return { scopeHealth: "complete", missingScopes: [] };
   const cached = googleScopeHealthCache.get(resolvedWorkspaceId); if (cached && cached.expiresAt > now) return cached.value;
   let value: GoogleScopeHealth;
   try { value = scopeProbe ? await scopeProbe() : await new GoogleCalendarService().scopeHealth(userId, resolvedWorkspaceId); }
-  catch { value = { scopeHealth: "unavailable", missingScopes: [] }; }
+  catch (error) {
+    const raw = error instanceof Error ? error.message : "unknown";
+    const code = raw.length <= 80 && !/eyJ|ya29\.|1\/|aesgcm/.test(raw) ? raw : error instanceof Error ? error.name : "unknown";
+    console.error("Google scope health unavailable", { code });
+    value = { scopeHealth: "unavailable", missingScopes: [] };
+  }
   googleScopeHealthCache.set(resolvedWorkspaceId, { value, expiresAt: now + GOOGLE_SCOPE_HEALTH_TTL_MS }); return value;
 }
 
@@ -426,21 +461,24 @@ export async function googleCalendarStatus(
   const workspaceId = typeof workspaceIdOrLoader === "string" ? workspaceIdOrLoader : undefined;
   const scopeHealthLoader = typeof workspaceIdOrLoader === "function" ? workspaceIdOrLoader : suppliedScopeHealthLoader;
   const resolvedWorkspaceId = await credentialWorkspace(userId, workspaceId);
-  const connection = await db.oAuthConnection.findUnique({ where: { workspaceId_provider: { workspaceId: resolvedWorkspaceId, provider: "google" } } });
-  const credentialsReady = await googleCredentialsReady(userId, resolvedWorkspaceId);
-  const scope = credentialsReady ? await (scopeHealthLoader ? scopeHealthLoader(userId) : getGoogleScopeHealth(userId, undefined, Date.now(), resolvedWorkspaceId)) : { scopeHealth: "unavailable" as const, missingScopes: [...REQUIRED_GOOGLE_CALENDAR_SCOPES] };
-  const ready = process.env.CALENDAR_PROVIDER === "google" && credentialsReady && scope.scopeHealth === "complete";
-  return {
-    configured: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
-    connected: ready,
-    credentialSource: connection?.refreshToken ? "encrypted_database" as const : environmentGoogleCredentialAllowed(resolvedWorkspaceId) ? "environment" as const : "none" as const,
-    disconnectSupported: Boolean(connection?.refreshToken),
-    disconnectPending: Boolean(connection && connection.disconnectStatus !== "ACTIVE"),
-    provider: ready ? "google" : "local",
-    requestedProvider: process.env.CALENDAR_PROVIDER === "google" ? "google" as const : "local" as const,
-    calendarId: connection?.calendarId || process.env.GOOGLE_CALENDAR_ID || "primary",
-    ...scope,
-  };
+  return runWithWorkspaceRead(userId, resolvedWorkspaceId, async () => {
+    const connection = await db.oAuthConnection.findUnique({ where: { workspaceId_provider: { workspaceId: resolvedWorkspaceId, provider: "google" } } });
+    const credentialsReady = await googleCredentialsReady(userId, resolvedWorkspaceId);
+    if (!credentialsReady) console.error("Google credentials not ready", { hasContext: Boolean(currentDatabaseContext()), hasConnection: Boolean(connection?.refreshToken) });
+    const scope = credentialsReady ? await (scopeHealthLoader ? scopeHealthLoader(userId) : getGoogleScopeHealth(userId, undefined, Date.now(), resolvedWorkspaceId)) : { scopeHealth: "unavailable" as const, missingScopes: [...REQUIRED_GOOGLE_CALENDAR_SCOPES] };
+    const ready = process.env.CALENDAR_PROVIDER === "google" && credentialsReady && scope.scopeHealth === "complete";
+    return {
+      configured: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+      connected: ready,
+      credentialSource: connection?.refreshToken ? "encrypted_database" as const : environmentGoogleCredentialAllowed(resolvedWorkspaceId) ? "environment" as const : "none" as const,
+      disconnectSupported: Boolean(connection?.refreshToken),
+      disconnectPending: Boolean(connection && connection.disconnectStatus !== "ACTIVE"),
+      provider: ready ? "google" : "local",
+      requestedProvider: process.env.CALENDAR_PROVIDER === "google" ? "google" as const : "local" as const,
+      calendarId: connection?.calendarId || process.env.GOOGLE_CALENDAR_ID || "primary",
+      ...scope,
+    };
+  });
 }
 
 type VerifiedGoogleAuthorization = { accessToken?: string | null; refreshToken?: string | null; expiresAt?: Date | null; providerUserId: string; scope: string };
@@ -465,9 +503,9 @@ async function persistVerifiedGoogleAuthorizationWithinTransaction(tx: Prisma.Tr
 }
 
 export async function persistVerifiedGoogleAuthorization(userId: string, expectedConnectionId: string | null, expectedConnectionGeneration: number | null, tokens: VerifiedGoogleAuthorization, workspaceId?: string) {
-  enterDatabaseAction("oauth_write");
   assertRequiredGoogleScopes(tokens.scope);
   const resolvedWorkspaceId = await credentialWorkspace(userId, workspaceId);
+  enterDatabaseAction("oauth_write", { workspaceId: resolvedWorkspaceId, userId, subject: "ADMIN" });
   await db.$transaction(async (tx) => { await persistVerifiedGoogleAuthorizationWithinTransaction(tx, userId, expectedConnectionId, expectedConnectionGeneration, tokens, resolvedWorkspaceId); });
   clearGoogleScopeHealthCache(resolvedWorkspaceId);
 }
@@ -476,8 +514,8 @@ export async function disconnectGoogleCalendar(userId: string, revoke: (token: s
   if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) throw new Error("Google OAuth client is not configured.");
   await new google.auth.OAuth2(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET).revokeToken(token);
 }, now = new Date(), workspaceId?: string) {
-  enterDatabaseAction("oauth_write");
   const resolvedWorkspaceId = await credentialWorkspace(userId, workspaceId);
+  enterDatabaseAction("oauth_write", { workspaceId: resolvedWorkspaceId, userId, subject: "ADMIN" });
   if (!await liveWorkspaceMember(userId, resolvedWorkspaceId, "ADMIN")) throw new AppError("FORBIDDEN", "Administrator access is required to disconnect Google Calendar.", 403);
   const claimed = await db.$transaction(async (tx) => {
     const administrator = await tx.membership.findFirst({ where: { workspaceId: resolvedWorkspaceId, userId, status: "ACTIVE", role: { in: ["OWNER", "ADMIN"] } }, select: { id: true } });
@@ -527,7 +565,7 @@ export async function retryPendingGoogleDisconnects(now = new Date(), revoke?: (
 }
 
 export async function createGoogleAuthorization(userId: string, authSessionId: string, workspaceId?: string) {
-  enterDatabaseAction("oauth_write");
+  enterDatabaseAction("oauth_write", { workspaceId, userId, subject: "ADMIN" });
   const state = randomBytes(32).toString("base64url");
   const codeVerifier = randomBytes(48).toString("base64url");
   const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url");
@@ -544,15 +582,16 @@ export async function createGoogleAuthorization(userId: string, authSessionId: s
   return new GoogleCalendarService().authorizationUrl(state, codeChallenge, nonce);
 }
 
-export async function consumeGoogleAuthorization(userId: string, authSessionId: string, state: string, code: string, finalizeHooks?: { beforeFinalize?: () => Promise<void>; afterPersist?: () => Promise<void> }) {
-  enterDatabaseAction("oauth_write");
+export async function consumeGoogleAuthorization(userId: string, authSessionId: string, state: string, code: string, finalizeHooks?: { beforeFinalize?: () => Promise<void>; afterPersist?: () => Promise<void> }, workspaceId?: string) {
+  enterDatabaseAction("oauth_write", { workspaceId, userId, subject: "ADMIN" });
   const now = new Date(); const processingToken = randomBytes(18).toString("base64url");
   const activeSession = await db.authSession.findFirst({ where: { id: authSessionId, userId, revokedAt: null, membership: { status: "ACTIVE", role: { in: ["OWNER", "ADMIN"] } } } });
-  if (!activeSession) throw new Error("Google OAuth session is no longer active.");
+  if (!activeSession) throw new AppError("INVALID_OAUTH_CALLBACK", "Sign in again, then reconnect Google Calendar from Integrations.", 401);
+  enterDatabaseAction("oauth_write", { workspaceId: workspaceId || activeSession.activeWorkspaceId, userId, subject: "ADMIN" });
   const record = await db.oAuthState.findFirst({ where: { id: state, workspaceId: activeSession.activeWorkspaceId, userId, authSessionId, consumedAt: null, expiresAt: { gt: now }, OR: [{ processingToken: null }, { processingExpiresAt: { lte: now } }] } });
-  if (!record) throw new Error("Google OAuth state is invalid, expired, or already used.");
+  if (!record) throw new AppError("INVALID_OAUTH_CALLBACK", "This Google authorization is invalid or already used. Start again from Integrations.", 400);
   const claimed = await db.oAuthState.updateMany({ where: { id: state, workspaceId: record.workspaceId, userId, authSessionId, consumedAt: null, OR: [{ processingToken: null }, { processingExpiresAt: { lte: now } }] }, data: { processingToken, processingExpiresAt: new Date(now.getTime() + 60_000) } });
-  if (claimed.count !== 1) throw new Error("Google OAuth state is already being processed.");
+  if (claimed.count !== 1) throw new AppError("INVALID_OAUTH_CALLBACK", "This Google authorization is already being processed. Start again from Integrations.", 409);
   const heartbeat = setInterval(() => { void db.oAuthState.updateMany({ where: { id: state, workspaceId: record.workspaceId, authSessionId, processingToken, consumedAt: null, expiresAt: { gt: new Date() } }, data: { processingExpiresAt: new Date(Date.now() + 60_000) } }).catch(() => undefined); }, 20_000);
   heartbeat.unref();
   try {
@@ -562,11 +601,11 @@ export async function consumeGoogleAuthorization(userId: string, authSessionId: 
       const liveSession = await tx.authSession.findFirst({ where: { id: authSessionId, userId, activeWorkspaceId: record.workspaceId, revokedAt: null, expiresAt: { gt: new Date() }, membership: { status: "ACTIVE", role: { in: ["OWNER", "ADMIN"] }, workspaceId: record.workspaceId, userId } } });
       if (!liveSession) throw new AppError("GOOGLE_CREDENTIAL_FENCE_LOST", "The active workspace changed. Start again.", 409);
       const liveState = await tx.oAuthState.findFirst({ where: { id: state, workspaceId: record.workspaceId, userId, authSessionId, processingToken, consumedAt: null, expiresAt: { gt: new Date() }, processingExpiresAt: { gt: new Date() } } });
-      if (!liveState) throw new Error("Google OAuth state is already being processed.");
+      if (!liveState) throw new AppError("INVALID_OAUTH_CALLBACK", "This Google authorization is already being processed. Start again from Integrations.", 409);
       await persistVerifiedGoogleAuthorizationWithinTransaction(tx, userId, record.expectedConnectionId, record.expectedConnectionGeneration, verified, record.workspaceId);
       if (finalizeHooks?.afterPersist) await finalizeHooks.afterPersist();
       const consumed = await tx.oAuthState.updateMany({ where: { id: state, workspaceId: record.workspaceId, authSessionId, processingToken, consumedAt: null, processingExpiresAt: { gt: new Date() } }, data: { consumedAt: new Date(), codeVerifier: "", nonce: "", processingToken: null, processingExpiresAt: null } });
-      if (consumed.count !== 1) throw new Error("Google OAuth state changed during completion.");
+      if (consumed.count !== 1) throw new AppError("INVALID_OAUTH_CALLBACK", "Google authorization changed during completion. Start again from Integrations.", 409);
     });
     clearGoogleScopeHealthCache(record.workspaceId);
   } catch (error) {

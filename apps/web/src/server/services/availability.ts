@@ -1,7 +1,7 @@
 import { DateTime } from "luxon";
 import type { AvailabilityInterval, AvailabilitySchedule, BookingSlot } from "@/lib/contracts";
 import { db } from "@/server/db";
-import { enterDatabaseAction } from "@/server/db-context";
+import { currentDatabaseContext, enterDatabaseAction, runWithDatabaseContext } from "@/server/db-context";
 
 export type BusyInterval = { start: Date; end: Date };
 export type SlotEventType = {
@@ -121,25 +121,44 @@ export async function getAvailability(
 }
 
 export async function setAvailability(workspaceId: string, userId: string, input: AvailabilitySchedule) {
-  enterDatabaseAction("availability_write");
-  await db.$transaction(async (tx) => {
-    const schedule = await tx.availabilitySchedule.upsert({
-      where: { workspaceId_userId: { workspaceId, userId } }, update: { timeZone: input.timeZone }, create: { workspaceId, userId, timeZone: input.timeZone },
-    });
-    await tx.availabilityInterval.deleteMany({ where: { scheduleId: schedule.id } });
-    if (input.intervals.length) {
-      await tx.availabilityInterval.createMany({ data: input.intervals.map((item) => ({
-        scheduleId: schedule.id, dayOfWeek: item.dayOfWeek, startMinute: item.startMinute, endMinute: item.endMinute,
+  const current = currentDatabaseContext();
+  return runWithDatabaseContext({
+    mode: "workspace",
+    workspaceId,
+    userId,
+    sessionHash: current?.sessionHash,
+    subject: current?.subject,
+    action: "availability_write",
+  }, async () => {
+    enterDatabaseAction("availability_write", { workspaceId, userId, sessionHash: current?.sessionHash, subject: current?.subject });
+    await db.$transaction(async (tx) => {
+      const schedule = await tx.availabilitySchedule.upsert({
+        where: { workspaceId_userId: { workspaceId, userId } }, update: { timeZone: input.timeZone }, create: { workspaceId, userId, timeZone: input.timeZone },
+      });
+      await tx.availabilityInterval.deleteMany({ where: { scheduleId: schedule.id } });
+      if (input.intervals.length) {
+        await tx.availabilityInterval.createMany({ data: input.intervals.map((item) => ({
+          scheduleId: schedule.id, dayOfWeek: item.dayOfWeek, startMinute: item.startMinute, endMinute: item.endMinute,
+        })) });
+      }
+      await tx.availabilityOverride.deleteMany({ where: { workspaceId, userId } });
+      if (input.overrides?.length) await tx.availabilityOverride.createMany({ data: input.overrides.map((item) => ({
+        workspaceId, userId, dateKey: item.dateKey, isAvailable: item.isAvailable,
+        startMinute: item.isAvailable ? item.startMinute : null, endMinute: item.isAvailable ? item.endMinute : null,
       })) });
-    }
-    await tx.availabilityOverride.deleteMany({ where: { workspaceId, userId } });
-    if (input.overrides?.length) await tx.availabilityOverride.createMany({ data: input.overrides.map((item) => ({
-      workspaceId, userId, dateKey: item.dateKey, isAvailable: item.isAvailable,
-      startMinute: item.isAvailable ? item.startMinute : null, endMinute: item.isAvailable ? item.endMinute : null,
-    })) });
-    await tx.user.update({ where: { id: userId }, data: { timeZone: input.timeZone } });
+    });
+    await runWithDatabaseContext({
+      mode: "workspace",
+      workspaceId,
+      userId,
+      sessionHash: currentDatabaseContext()?.sessionHash,
+      subject: currentDatabaseContext()?.subject,
+      action: "account_write",
+    }, async () => {
+      await db.user.update({ where: { id: userId }, data: { timeZone: input.timeZone } });
+    });
+    return getAvailability(workspaceId, userId);
   });
-  return getAvailability(workspaceId, userId);
 }
 
 export function stripIntervalIds(intervals: AvailabilityInterval[]) {

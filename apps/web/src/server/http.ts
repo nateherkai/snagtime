@@ -19,7 +19,13 @@ export function apiError(error: unknown) {
       { status: error.status },
     );
   }
-  console.error("Unhandled API error", { type: error instanceof Error ? error.name : "unknown" });
+  const prismaCode = error && typeof error === "object" && "code" in error && typeof (error as { code: unknown }).code === "string" ? (error as { code: string }).code : "";
+  if (/^P\d{4}$/.test(prismaCode)) {
+    console.error("Unhandled API error", { type: error instanceof Error ? error.name : "unknown", code: prismaCode });
+  } else {
+    const message = error instanceof Error ? error.message : "unknown";
+    console.error("Unhandled API error", { type: error instanceof Error ? error.name : "unknown", code: message.length <= 120 && !/eyJ|[A-Za-z0-9_-]{40,}/.test(message) ? message : error instanceof Error ? error.name : "unknown" });
+  }
   return NextResponse.json({ error: { code: "INTERNAL_ERROR", message: "Something went wrong." } }, { status: 500 });
 }
 

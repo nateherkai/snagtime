@@ -51,7 +51,7 @@ async function assertLocationReady(workspaceId: string, ownerId: string, locatio
 }
 
 export async function createEventType(workspaceId: string, ownerId: string, input: CreateEventTypeInput) {
-  enterDatabaseAction("event_write");
+  enterDatabaseAction("event_write", { workspaceId, userId: ownerId });
   if (await db.eventType.findUnique({ where: { slug: input.slug } })) throw conflict("That booking link is already in use.");
   const durations = normalizedDurations(input).map((item) => ({
     label: item.label, durationMinutes: item.durationMinutes, isDefault: item.isDefault,
@@ -70,7 +70,7 @@ export async function createEventType(workspaceId: string, ownerId: string, inpu
 }
 
 export async function updateEventType(workspaceId: string, _actingUserId: string, id: string, input: UpdateEventTypeInput, readiness: CalendarReadiness = googleCalendarReady) {
-  enterDatabaseAction("event_write");
+  enterDatabaseAction("event_write", { workspaceId, userId: _actingUserId });
   const current = await db.eventType.findFirst({ where: { id, workspaceId }, include: includeOptions });
   if (!current) throw notFound("Event type");
   if (input.slug && input.slug !== current.slug && await db.eventType.findUnique({ where: { slug: input.slug } })) throw conflict("That booking link is already in use.");
@@ -106,8 +106,8 @@ export async function updateEventType(workspaceId: string, _actingUserId: string
   }));
 }
 
-export async function deleteEventType(workspaceId: string, id: string) {
-  enterDatabaseAction("event_write");
+export async function deleteEventType(workspaceId: string, id: string, userId?: string) {
+  enterDatabaseAction("event_write", { workspaceId, userId });
   const current = await db.eventType.findFirst({ where: { id, workspaceId } });
   if (!current) throw notFound("Event type");
   if (await db.booking.count({ where: { eventTypeId: id } })) await db.eventType.update({ where: { id }, data: { isActive: false } });

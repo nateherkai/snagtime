@@ -14,8 +14,27 @@ function field(value?: string) { return value || ""; }
 export function contextSignature(context: DatabaseContext) {
   return createHmac("sha256", contextSecret()).update(["v2",context.mode,field(context.workspaceId),field(context.userId),field(context.sessionHash),field(context.subject),field(context.action)].join("\0")).digest("hex");
 }
+export function productionTenantContextEnabled() {
+  return process.env.DATABASE_PROVIDER === "postgresql" && process.env.NODE_ENV === "production";
+}
 export function enterDatabaseContext(context: DatabaseContext) {
-  if (process.env.DATABASE_PROVIDER === "postgresql" && process.env.NODE_ENV === "production") databaseContext.enterWith(context);
+  if (productionTenantContextEnabled()) databaseContext.enterWith(context);
+}
+export async function runWithDatabaseContext<T>(context: DatabaseContext, operation: () => Promise<T>): Promise<T> {
+  if (!productionTenantContextEnabled()) return operation();
+  return databaseContext.run(context, operation);
+}
+export async function runWithWorkspaceRead<T>(userId: string, workspaceId: string, operation: () => Promise<T>): Promise<T> {
+  const current = currentDatabaseContext();
+  if (current?.mode === "public") return operation();
+  return runWithDatabaseContext({
+    mode: "workspace",
+    workspaceId,
+    userId,
+    sessionHash: current?.sessionHash,
+    subject: current?.subject,
+    action: current?.workspaceId === workspaceId && current.action ? current.action : "workspace_read",
+  }, operation);
 }
 export function enterAuthDatabaseContext(subject: string, userId?: string, workspaceId?: string, action = "auth") { enterDatabaseContext({ mode: "auth", subject: subject.toLowerCase(), userId, workspaceId,action }); }
 export function enterBootstrapDatabaseContext(email: string, userId?: string, workspaceId?: string) { enterDatabaseContext({ mode: "bootstrap", workspaceId, userId, subject: [email.toLowerCase(),userId||"",workspaceId||""].join("|"),action:"register" }); }
@@ -23,9 +42,13 @@ export function enterPublicDatabaseContext(slug: string, workspaceId?: string, s
 export function enterPublicBookingDatabaseContext(eventTypeId: string, workspaceId: string, idempotencyKey: string) { enterDatabaseContext({ mode: "public", workspaceId, subject: `${eventTypeId}|${idempotencyKey}`,action:"booking_create" }); }
 export function enterCapabilityDatabaseContext(subject: string, userId?: string, workspaceId?: string, action = "capability") { enterDatabaseContext({ mode: "capability", subject, userId, workspaceId,action }); }
 export function enterProviderDatabaseContext(subject: string, workspaceId?: string, action = "provider_commit") { enterDatabaseContext({ mode: "provider", subject, workspaceId,action }); }
-export function enterDatabaseAction(action:string){
+export function enterDatabaseAction(action:string, scope?: { workspaceId?: string; userId?: string; sessionHash?: string; subject?: string }){
   const current=databaseContext.getStore();
-  if(current)enterDatabaseContext({mode:current.mode,workspaceId:current.workspaceId,userId:current.userId,sessionHash:current.sessionHash,subject:current.subject,action});
+  if (current) {
+    enterDatabaseContext({ mode: current.mode, workspaceId: scope?.workspaceId || current.workspaceId, userId: scope?.userId || current.userId, sessionHash: scope?.sessionHash ?? current.sessionHash, subject: scope?.subject ?? current.subject, action });
+    return;
+  }
+  if (scope?.workspaceId && scope?.userId) enterDatabaseContext({ mode: "workspace", workspaceId: scope.workspaceId, userId: scope.userId, sessionHash: scope.sessionHash, subject: scope.subject, action });
 }
 export function currentDatabaseContext() { return databaseContext.getStore(); }
 export async function installDatabaseContext(transaction: Record<string, unknown>, context: DatabaseContext) {

@@ -81,6 +81,13 @@ describe("Google Calendar notification adapter", () => {
     await expect(googleCalendarStatus(user.id, user.workspaceId, async () => ({ scopeHealth: "insufficient", missingScopes: [REQUIRED_GOOGLE_CALENDAR_SCOPES[0]] }))).resolves.toMatchObject({ connected: false, provider: "local", requestedProvider: "google", scopeHealth: "insufficient", missingScopes: [REQUIRED_GOOGLE_CALENDAR_SCOPES[0]] });
     await expect(googleCalendarStatus(user.id, user.workspaceId, async () => ({ scopeHealth: "complete", missingScopes: [] }))).resolves.toMatchObject({ connected: true, provider: "google", scopeHealth: "complete", missingScopes: [] });
   });
+  it("reports encrypted database credentials as connected when live scope health is complete", async () => {
+    process.env.CALENDAR_PROVIDER = "google"; process.env.GOOGLE_CLIENT_ID = "client"; process.env.GOOGLE_CLIENT_SECRET = "secret";
+    process.env.TOKEN_ENCRYPTION_KEY = "00112233445566778899aabbccddeeffffeeddccbbaa99887766554433221100";
+    const user = await calendarTestUser("status-db");
+    await db.oAuthConnection.create({ data: { workspaceId: user.workspaceId, userId: user.id, provider: "google", refreshToken: encryptToken("refresh-secret"), disconnectStatus: "ACTIVE", calendarId: "primary" } });
+    await expect(googleCalendarStatus(user.id, user.workspaceId, async () => ({ scopeHealth: "complete", missingScopes: [] }))).resolves.toMatchObject({ connected: true, provider: "google", credentialSource: "encrypted_database", scopeHealth: "complete", missingScopes: [] });
+  });
   it("uses a deterministic provider id and emails the invitee for creates", () => {
     const booking = { ...bookingFixture(), eventTitleSnapshot: "Accepted title", locationTypeSnapshot: "CUSTOM", locationValueSnapshot: "Accepted room" }; const eventId = providerCalendarEventId(booking.id);
     const request = googleCreateEventRequest("primary", eventId, booking);
@@ -306,7 +313,7 @@ describe("Google Calendar notification adapter", () => {
     const stateUrl = new URL(await createGoogleAuthorization(user.id, authSession.id, user.workspaceId));
     const stateId = stateUrl.searchParams.get("state")!;
     const exchange = vi.spyOn(GoogleCalendarService.prototype, "exchangeAuthorizationCode").mockResolvedValue(verifiedAuthorization());
-    await expect(consumeGoogleAuthorization(user.id, authSession.id, stateId, "authorization-code", { beforeFinalize: async () => { await db.oAuthState.update({ where: { id: stateId }, data: { processingToken: "stale-token", processingExpiresAt: new Date("2099-01-01T00:05:00Z") } }); } })).rejects.toThrow("Google OAuth state is already being processed.");
+    await expect(consumeGoogleAuthorization(user.id, authSession.id, stateId, "authorization-code", { beforeFinalize: async () => { await db.oAuthState.update({ where: { id: stateId }, data: { processingToken: "stale-token", processingExpiresAt: new Date("2099-01-01T00:05:00Z") } }); } })).rejects.toMatchObject({ code: "INVALID_OAUTH_CALLBACK" });
     expect(exchange).toHaveBeenCalledTimes(1);
     exchange.mockRestore();
   });
