@@ -10,7 +10,7 @@ export async function getBranding(workspaceId: string): Promise<WorkspaceBrandin
 }
 
 export async function setBranding(workspaceId: string, userId: string, input: WorkspaceBranding) {
-  enterDatabaseAction("branding_write");
+  enterDatabaseAction("branding_write", { workspaceId, userId });
   const canonicalLogo = input.logoUrl && !isRemoteImageUrl(input.logoUrl) ? await canonicalizeImageDataUrl(input.logoUrl, "logoUrl") : input.logoUrl;
   return db.$transaction(async (tx) => {
     const existing = await tx.workspaceBranding.findUnique({ where: { workspaceId }, select: { logoUrl: true } });

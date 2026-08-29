@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { generateSlots, mergeBusyIntervals } from "@/server/services/availability";
+import { db } from "@/server/db";
+import { generateSlots, getAvailability, mergeBusyIntervals, setAvailability } from "@/server/services/availability";
 
 const eventType = {
   durationMinutes: 30,
@@ -61,5 +62,21 @@ describe("availability slot generation", () => {
       now: new Date("2026-08-20T00:00:00Z"), outputTimeZone: "UTC",
     });
     expect(slots.map((slot) => slot.start)).toEqual(["2026-08-25T10:00:00.000Z"]);
+  });
+});
+
+describe("availability persistence", () => {
+  it("saves weekly hours and the organizer time zone", async () => {
+    const user = await db.user.create({ data: { email: `avail-${crypto.randomUUID()}@example.com`, name: "Avail", passwordHash: "test", timeZone: "UTC" } });
+    const workspace = await db.workspace.create({ data: { name: "Avail workspace", timeZone: "UTC" } });
+    await db.membership.create({ data: { workspaceId: workspace.id, userId: user.id, role: "OWNER" } });
+    try {
+      await setAvailability(workspace.id, user.id, { timeZone: "America/Chicago", intervals: [{ dayOfWeek: 1, startMinute: 540, endMinute: 600 }], overrides: [] });
+      await expect(getAvailability(workspace.id, user.id)).resolves.toMatchObject({ timeZone: "America/Chicago", intervals: [expect.objectContaining({ dayOfWeek: 1, startMinute: 540, endMinute: 600 })] });
+      expect((await db.user.findUniqueOrThrow({ where: { id: user.id } })).timeZone).toBe("America/Chicago");
+    } finally {
+      await db.workspace.delete({ where: { id: workspace.id } });
+      await db.user.delete({ where: { id: user.id } });
+    }
   });
 });

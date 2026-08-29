@@ -102,13 +102,14 @@ export type WorkspaceAccess = {
   workspace: Workspace;
   workspaceId: string;
   role: WorkspaceRole;
+  sessionHash?: string;
 };
 
 export async function requireWorkspaceAccess(request: Request, minimumRole: WorkspaceRole = "MEMBER"): Promise<WorkspaceAccess> {
   const session = await requireSessionRecord(request);
   const role = session.membership.role as WorkspaceRole;
   if (!(role in roleRank) || roleRank[role] < roleRank[minimumRole]) throw new AppError("FORBIDDEN", "You do not have access to this workspace action.", 403);
-  return { sessionId: session.id, user: session.user, membership: session.membership, workspace: session.workspace, workspaceId: session.activeWorkspaceId, role };
+  return { sessionId: session.id, user: session.user, membership: session.membership, workspace: session.workspace, workspaceId: session.activeWorkspaceId, role, sessionHash: session.tokenHash };
 }
 
 export async function requireWorkspaceMutationAccess(request: Request, minimumRole: WorkspaceRole = "MEMBER") {

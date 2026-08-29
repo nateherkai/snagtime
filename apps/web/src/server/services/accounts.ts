@@ -29,7 +29,7 @@ export async function getAccountSummary(access: WorkspaceAccess): Promise<Accoun
 }
 
 export async function updateProfileImage(access: WorkspaceAccess, imageUrl: string | null) {
-  enterDatabaseAction("account_write");
+  enterDatabaseAction("account_write", { workspaceId: access.workspaceId, userId: access.user.id, sessionHash: access.sessionHash, subject: access.role });
   const canonicalImage = imageUrl === null ? null : await canonicalizeImageDataUrl(imageUrl, "imageUrl");
   const user = await db.user.update({ where: { id: access.user.id }, data: { imageUrl: canonicalImage } });
   return mapUser(user);
@@ -61,7 +61,7 @@ export async function registerAccount(input: RegistrationInput, observeWork: (ph
 }
 
 export async function changeAccountPassword(access: WorkspaceAccess, currentPassword: string, newPassword: string) {
-  enterDatabaseAction("account_write");
+  enterDatabaseAction("account_write", { workspaceId: access.workspaceId, userId: access.user.id, sessionHash: access.sessionHash, subject: access.role });
   if (!await verifyPassword(currentPassword, access.user.passwordHash)) throw new AppError("AUTHENTICATION_FAILED", "The account request could not be completed.", 401);
   const passwordHash = await hashPassword(newPassword); const token = createSessionToken(access.user.id); const payload = readSessionToken(token)!; const now = new Date();
   await db.$transaction(async (tx) => {
@@ -74,7 +74,7 @@ export async function changeAccountPassword(access: WorkspaceAccess, currentPass
 }
 
 export async function completeWorkspaceOnboarding(access: WorkspaceAccess) {
-  enterDatabaseAction("workspace_update");
+  enterDatabaseAction("workspace_update", { workspaceId: access.workspaceId, userId: access.user.id, sessionHash: access.sessionHash, subject: access.role });
   await db.workspace.update({ where: { id: access.workspaceId }, data: { onboardingCompletedAt: new Date() } });
 }
 
@@ -83,7 +83,7 @@ export async function listWorkspaceInvitations(workspaceId: string): Promise<Wor
 }
 
 export async function createWorkspaceInvitation(access: WorkspaceAccess, email: string, role: "ADMIN" | "MEMBER") {
-  enterDatabaseAction("invitation_write");
+  enterDatabaseAction("invitation_write", { workspaceId: access.workspaceId, userId: access.user.id, sessionHash: access.sessionHash, subject: access.role });
   const normalized = email.toLowerCase(); const newId = randomBytes(18).toString("base64url");
   await db.$transaction(async (tx) => {
     const actor = await tx.membership.findFirst({ where: { id: access.membership.id, workspaceId: access.workspaceId, userId: access.user.id, status: "ACTIVE", role: { in: ["OWNER","ADMIN"] } } });
@@ -103,7 +103,7 @@ function invalidInvitation() { return new AppError("INVALID_OR_EXPIRED_TOKEN", "
 export async function acceptWorkspaceInvitation(access: WorkspaceAccess, token: string, now = new Date()) {
   const id = actionTokenId(token); if (!id || !access.user.emailVerifiedAt) throw invalidInvitation();
   enterCapabilityDatabaseContext(id,access.user.id);
-  enterDatabaseAction("invitation_accept");
+  enterDatabaseAction("invitation_accept", { workspaceId: access.workspaceId, userId: access.user.id, sessionHash: access.sessionHash, subject: access.role });
   let acceptedWorkspaceId = "";
   await db.$transaction(async (tx) => {
     const invitation = await tx.workspaceInvitation.findUnique({ where: { id } });
@@ -129,7 +129,7 @@ export async function acceptWorkspaceInvitation(access: WorkspaceAccess, token: 
 }
 
 export async function updateMembershipRole(access: WorkspaceAccess, membershipId: string, role: WorkspaceRole, status: "ACTIVE" | "REMOVED") {
-  enterDatabaseAction("membership_change");
+  enterDatabaseAction("membership_change", { workspaceId: access.workspaceId, userId: access.user.id, sessionHash: access.sessionHash, subject: access.role });
   await db.$transaction(async (tx) => {
     const actor = await tx.membership.findFirst({ where: { id: access.membership.id, workspaceId: access.workspaceId, userId: access.user.id, role: "OWNER", status: "ACTIVE" } });
     if (!actor) throw new AppError("FORBIDDEN", "You do not have access to this workspace action.", 403);
