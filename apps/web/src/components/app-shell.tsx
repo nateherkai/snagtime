@@ -19,6 +19,7 @@ const navigation: { href: string; label: string; icon: IconName }[] = [
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
+  const councilForgeOnly = process.env.NEXT_PUBLIC_COUNCILFORGE_SSO_ONLY === "true";
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [user, setUser] = useState<SessionUser | null | undefined>(undefined);
@@ -52,6 +53,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const logout = async () => { setAuthError(""); try { await frontendApi.logout(); setUser(null); setWorkspace(null); setOpen(false); } catch (reason) { setAuthError(reason instanceof Error ? reason.message : "Sign out failed."); } };
 
   if (user === undefined) return <div className="auth-page"><div className="auth-card" role="status"><BrandMark /><span className="spinner" /><p>Checking your session…</p></div></div>;
+  if (!user && councilForgeOnly) return <div className="auth-page"><main className="auth-card"><BrandMark /><div><span className="outcome-eyebrow">CouncilForge access</span><h1>Open SnagTime from CouncilForge</h1><p>Your organization and access are managed by the CouncilForge Admin Dashboard.</p></div>{authError && <div className="form-error" role="alert" aria-live="assertive">{authError}</div>}<a className="button button-primary" href="https://admin.aiautomationauthority.com/tools/scheduling/launch">Return to CouncilForge</a></main></div>;
   if (!user) return <div className="auth-page"><main className="auth-card"><BrandMark /><div><span className="outcome-eyebrow">Organizer access</span><h1>Welcome back</h1><p>Sign in to manage your availability, booking links, and meetings.</p></div><form onSubmit={login}><label>Email address<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" required /></label><label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label><Link className="auth-inline-link" href="/forgot-password">Forgot password?</Link>{authError && <div className="form-error" role="alert" aria-live="assertive">{authError}</div>}<button className="button button-primary" type="submit" disabled={authenticating}>{authenticating ? "Signing in…" : "Sign in"}</button></form><p className="auth-switch">New to SnagTime? <Link href="/signup">Create a workspace</Link> · <Link href="/verify-email">Verify email</Link></p></main></div>;
   return (
     <WorkspaceAccessProvider workspace={workspace}><div className="app-shell">

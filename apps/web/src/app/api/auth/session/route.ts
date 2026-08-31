@@ -7,6 +7,7 @@ import { AppError } from "@/server/errors";
 import { verifyPassword } from "@/server/auth/password";
 import { clientAddress, enforceRateLimit } from "@/server/rate-limit";
 import { enterAuthDatabaseContext } from "@/server/db-context";
+import { assertLocalAccountAuthorityAllowed } from "@/server/auth/councilforge";
 
 function loginRoleRank(role: string) { return role === "OWNER" ? 3 : role === "ADMIN" ? 2 : 1; }
 const DUMMY_LOGIN_HASH = `scrypt:v1:${Buffer.alloc(16).toString("base64url")}:${Buffer.alloc(32).toString("base64url")}`;
@@ -18,6 +19,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     assertSameOrigin(request);
+    assertLocalAccountAuthorityAllowed();
     const { email, password } = demoLoginInput.parse(await jsonBody(request));
     await enforceRateLimit(`login:ip:${clientAddress(request)}`, 12, 15 * 60_000); await enforceRateLimit(`login:account:${email}`, 8, 15 * 60_000);
     enterAuthDatabaseContext(email);

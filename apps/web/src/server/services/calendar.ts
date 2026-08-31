@@ -381,6 +381,7 @@ class FallbackCalendarService implements CalendarService {
   private readonly proofGoogle = new ProofGoogleCalendarService();
   private readonly local = new LocalCalendarService();
   private async service(userId: string, workspaceId?: string) {
+    if (process.env.CALENDAR_PROVIDER === "internal" && process.env.SNAGTIME_STANDALONE_MODE === "true") return this.local;
     if (process.env.CALENDAR_PROVIDER === "local" && process.env.NODE_ENV !== "production") return this.local;
     if (process.env.CALENDAR_PROVIDER !== "google" || !await googleCalendarReady(userId, workspaceId)) throw new AppError("GOOGLE_CALENDAR_RETRY", "This workspace requires a live Google Calendar connection before availability can be trusted.", 503);
     return providerProofMode() ? this.proofGoogle : this.google;

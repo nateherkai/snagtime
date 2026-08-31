@@ -11,6 +11,7 @@ datasource db {
 
 model User {
   id                   String                @id @default(cuid())
+  councilForgeUserId   String?               @unique
   email                String                @unique
   name                 String
   imageUrl             String?
@@ -34,6 +35,8 @@ model User {
 
 model Workspace {
   id                    String                 @id @default(cuid())
+  councilForgeCompanyId String?                @unique
+  councilForgeEdgeId    String?                @unique
   name                  String
   timeZone              String                 @default("America/Chicago")
   onboardingCompletedAt DateTime?
@@ -55,6 +58,14 @@ model Workspace {
   localInboxMessages    LocalInboxMessage[]
   accountActionTokens   AccountActionToken[]
   bookingRecoveryTokens BookingRecoveryToken[]
+}
+
+model CouncilForgeSsoReplay {
+  jti       String   @id
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
 }
 
 model Membership {

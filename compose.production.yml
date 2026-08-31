@@ -1,43 +1,36 @@
 name: snagtime-production
+
+x-runtime: &runtime
+  NODE_ENV: production
+  DATABASE_PROVIDER: postgresql
+  NEXT_PUBLIC_APP_URL: https://snagtime.aiautomationauthority.com
+  NEXT_PUBLIC_COUNCILFORGE_SSO_ONLY: "true"
+  SNAGTIME_STANDALONE_MODE: "true"
+  SNAGTIME_COUNCILFORGE_ONLY: "true"
+  DEMO_MODE: "false"
+  EMAIL_PROVIDER: disabled
+  CALENDAR_PROVIDER: internal
+  PAYMENTS_PROVIDER: stub
+  OUTBOX_WORKER_MODE: dedicated
+  OUTBOX_WORKER_ENABLED: "false"
+  BUILD_ID: ${BUILD_ID:?set immutable build identity}
+
 services:
-  postgres:
-    build: { context: ., dockerfile: infrastructure/postgresql/Dockerfile }
-    environment:
-      POSTGRES_USER: tempocove_owner
-      POSTGRES_DB: tempocove
-      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_owner_password
-    secrets: [postgres_owner_password,postgres_server_cert,postgres_server_key,postgres_ca_cert]
-    volumes: [postgres_data:/var/lib/postgresql/18/docker]
-    healthcheck: { test: ["CMD-SHELL", "pg_isready -U tempocove_owner -d tempocove"], interval: 10s, timeout: 5s, retries: 12 }
-    restart: unless-stopped
-    security_opt: [no-new-privileges:true]
-    cap_drop: [ALL]
-    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
-    deploy: { resources: { limits: { cpus: "2", memory: 2G } } }
-  migration:
-    build: { context: ., target: migration }
-    profiles: [migration]
-    environment: &production_env
-      NODE_ENV: production
-      DATABASE_PROVIDER: postgresql
-      DATABASE_URL_FILE: /run/secrets/migration_database_url
-      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:?set canonical HTTPS origin}
-    secrets: [migration_database_url,postgres_ca_cert]
-    depends_on: { postgres: { condition: service_healthy } }
-    read_only: true
-    tmpfs: [/tmp]
-    security_opt: [no-new-privileges:true]
-    cap_drop: [ALL]
   web:
-    build: { context: ., target: runtime, args: { BUILD_ID: "${BUILD_ID:?set immutable build identity}" } }
-    command: ["node","apps/web/server.js"]
-    environment: &app_env
-      NODE_ENV: production
-      DATABASE_PROVIDER: postgresql
-      DATABASE_URL_FILE: /run/secrets/app_database_url
+    image: snagtime:${BUILD_ID:?set immutable build identity}
+    build:
+      context: .
+      target: runtime
+      args:
+        BUILD_ID: ${BUILD_ID:?set immutable build identity}
+        NEXT_PUBLIC_COUNCILFORGE_SSO_ONLY: "true"
+    command: ["node", "apps/web/server.js"]
+    environment:
+      <<: *runtime
       DATABASE_ROLE: app
+      DATABASE_URL_FILE: /run/secrets/app_database_url
       AUTH_SECRET_FILE: /run/secrets/auth_secret
-      BOOKING_CAPABILITY_KEY_ID: ${BOOKING_CAPABILITY_KEY_ID:?set booking capability key id}
+      BOOKING_CAPABILITY_KEY_ID: councilforge-v1
       BOOKING_CAPABILITY_SECRET_FILE: /run/secrets/booking_capability_secret
       BOOKING_CAPABILITY_KEYRING_FILE: /run/secrets/booking_capability_keyring
       TOKEN_ENCRYPTION_KEY_FILE: /run/secrets/token_encryption_key
@@ -46,97 +39,92 @@ services:
       RATE_LIMIT_HASH_SECRET_FILE: /run/secrets/rate_limit_hash_secret
       PROXY_SHARED_SECRET_FILE: /run/secrets/proxy_shared_secret
       OPERATOR_HEALTH_SECRET_FILE: /run/secrets/operator_health_secret
-      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:?set canonical HTTPS origin}
+      SNAGTIME_SSO_SECRET_FILE: /run/secrets/snagtime_sso_secret
       RATE_LIMIT_PROVIDER: postgresql
       RATE_LIMIT_MAX_BUCKETS: "100000"
-      OUTBOX_WORKER_MODE: dedicated
-      OUTBOX_WORKER_ENABLED: "false"
       TRUST_PROXY: "true"
-      DEMO_MODE: "false"
-      EMAIL_PROVIDER: smtp
-      CALENDAR_PROVIDER: google
-      PAYMENTS_PROVIDER: stripe
-      BUILD_ID: ${BUILD_ID:?set immutable build identity}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?set Google client id}
-      GOOGLE_CLIENT_SECRET_FILE: /run/secrets/google_client_secret
-      STRIPE_SECRET_KEY_FILE: /run/secrets/stripe_secret_key
-      STRIPE_WEBHOOK_SECRET_FILE: /run/secrets/stripe_webhook_secret
-      SMTP_HOST: ${SMTP_HOST:?set SMTP host}
-      SMTP_PORT: ${SMTP_PORT:?set SMTP port}
-      SMTP_TLS_MODE: ${SMTP_TLS_MODE:?set implicit or starttls}
-      SMTP_USER: ${SMTP_USER:?set SMTP user}
-      SMTP_PASSWORD_FILE: /run/secrets/smtp_password
-      EMAIL_FROM: ${EMAIL_FROM:?set sender}
-      EMAIL_REPLY_TO: ${EMAIL_REPLY_TO:?set system reply address}
-      EMAIL_SENDER_DOMAIN: ${EMAIL_SENDER_DOMAIN:?set authorized sender domain}
-    secrets: [app_database_url,postgres_ca_cert,auth_secret,booking_capability_secret,booking_capability_keyring,token_encryption_key,email_token_secret,tenant_context_secret,rate_limit_hash_secret,proxy_shared_secret,operator_health_secret,google_client_secret,stripe_secret_key,stripe_webhook_secret,smtp_password]
-    depends_on: { postgres: { condition: service_healthy } }
+    secrets:
+      - app_database_url
+      - postgres_ca_cert
+      - auth_secret
+      - booking_capability_secret
+      - booking_capability_keyring
+      - token_encryption_key
+      - email_token_secret
+      - tenant_context_secret
+      - rate_limit_hash_secret
+      - proxy_shared_secret
+      - operator_health_secret
+      - snagtime_sso_secret
+    networks:
+      - councilforge-public
+      - traefik-public
     read_only: true
     tmpfs: [/tmp]
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
     restart: unless-stopped
-    expose: ["3000"]
-    healthcheck: { test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"], interval: 15s, timeout: 4s, retries: 6 }
-    deploy: { resources: { limits: { cpus: "1", memory: 768M } } }
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 4s
+      retries: 8
+      start_period: 30s
+    deploy:
+      resources:
+        limits: { cpus: "1", memory: 768M }
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: traefik-public
+      traefik.http.routers.snagtime.rule: Host(`snagtime.aiautomationauthority.com`)
+      traefik.http.routers.snagtime.entrypoints: websecure
+      traefik.http.routers.snagtime.tls: "true"
+      traefik.http.routers.snagtime.tls.certresolver: letsencrypt
+      traefik.http.routers.snagtime.middlewares: snagtime-trusted-proxy@file
+      traefik.http.services.snagtime.loadbalancer.server.port: "3000"
+
   worker:
-    build: { context: ., target: runtime, args: { BUILD_ID: "${BUILD_ID:?set immutable build identity}" } }
-    command: ["node","dist/worker.mjs"]
+    image: snagtime:${BUILD_ID:?set immutable build identity}
+    command: ["node", "dist/worker.mjs"]
     environment:
-      NODE_ENV: production
-      DATABASE_PROVIDER: postgresql
+      <<: *runtime
       DATABASE_ROLE: worker
       WORKER_DATABASE_URL_FILE: /run/secrets/worker_database_url
       TOKEN_ENCRYPTION_KEY_FILE: /run/secrets/token_encryption_key
       EMAIL_TOKEN_SECRET_FILE: /run/secrets/email_token_secret
-      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:?set canonical HTTPS origin}
-      OUTBOX_WORKER_MODE: dedicated
-      OUTBOX_WORKER_ENABLED: "false"
-      DEMO_MODE: "false"
-      EMAIL_PROVIDER: smtp
-      CALENDAR_PROVIDER: google
-      PAYMENTS_PROVIDER: stripe
-      BUILD_ID: ${BUILD_ID:?set immutable build identity}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?set Google client id}
-      GOOGLE_CLIENT_SECRET_FILE: /run/secrets/google_client_secret
-      STRIPE_SECRET_KEY_FILE: /run/secrets/stripe_secret_key
-      SMTP_HOST: ${SMTP_HOST:?set SMTP host}
-      SMTP_PORT: ${SMTP_PORT:?set SMTP port}
-      SMTP_TLS_MODE: ${SMTP_TLS_MODE:?set implicit or starttls}
-      SMTP_USER: ${SMTP_USER:?set SMTP user}
-      SMTP_PASSWORD_FILE: /run/secrets/smtp_password
-      EMAIL_FROM: ${EMAIL_FROM:?set sender}
-      EMAIL_REPLY_TO: ${EMAIL_REPLY_TO:?set system reply address}
-      EMAIL_SENDER_DOMAIN: ${EMAIL_SENDER_DOMAIN:?set authorized sender domain}
-    secrets: [worker_database_url,postgres_ca_cert,token_encryption_key,email_token_secret,google_client_secret,stripe_secret_key,smtp_password]
-    depends_on: { postgres: { condition: service_healthy } }
+    secrets:
+      - worker_database_url
+      - postgres_ca_cert
+      - token_encryption_key
+      - email_token_secret
+    networks:
+      - councilforge-public
     read_only: true
     tmpfs: [/tmp]
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
     restart: unless-stopped
-    deploy: { resources: { limits: { cpus: "1", memory: 768M } } }
+    stop_grace_period: 45s
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 512M }
+
 secrets:
-  postgres_owner_password: { external: true }
-  migration_database_url: { external: true }
-  app_database_url: { external: true }
-  worker_database_url: { external: true }
-  monitor_database_url: { external: true }
-  auth_secret: { external: true }
-  booking_capability_secret: { external: true }
-  booking_capability_keyring: { external: true }
-  token_encryption_key: { external: true }
-  email_token_secret: { external: true }
-  tenant_context_secret: { external: true }
-  rate_limit_hash_secret: { external: true }
-  proxy_shared_secret: { external: true }
-  operator_health_secret: { external: true }
-  google_client_secret: { external: true }
-  stripe_secret_key: { external: true }
-  stripe_webhook_secret: { external: true }
-  smtp_password: { external: true }
-  postgres_server_cert: { external: true }
-  postgres_server_key: { external: true }
-  postgres_ca_cert: { external: true }
-volumes:
-  postgres_data: {}
+  app_database_url: { file: "${SNAGTIME_SECRETS_DIR:-/opt/snagtime/secrets}/app_database_url" }
+  worker_database_url: { file: "${SNAGTIME_SECRETS_DIR:-/opt/snagtime/secrets}/worker_database_url" }
+  auth_secret: { file: "${SNAGTIME_SECRETS_DIR:-/opt/snagtime/secrets}/auth_secret" }
+  booking_capability_secret: { file: "${SNAGTIME_SECRETS_DIR:-/opt/snagtime/secrets}/booking_capability_secret" }
+  booking_capability_keyring: { file: "${SNAGTIME_SECRETS_DIR:-/opt/snagtime/secrets}/booking_capability_keyring" }
+  token_encryption_key: { file: "${SNAGTIME_SECRETS_DIR:-/opt/snagtime/secrets}/token_encryption_key" }
+  email_token_secret: { file: "${SNAGTIME_SECRETS_DIR:-/opt/snagtime/secrets}/email_token_secret" }
+  tenant_context_secret: { file: "${SNAGTIME_SECRETS_DIR:-/opt/snagtime/secrets}/tenant_context_secret" }
+  rate_limit_hash_secret: { file: "${SNAGTIME_SECRETS_DIR:-/opt/snagtime/secrets}/rate_limit_hash_secret" }
+  proxy_shared_secret: { file: "${SNAGTIME_SECRETS_DIR:-/opt/snagtime/secrets}/proxy_shared_secret" }
+  operator_health_secret: { file: "${SNAGTIME_SECRETS_DIR:-/opt/snagtime/secrets}/operator_health_secret" }
+  snagtime_sso_secret: { file: "${SNAGTIME_SECRETS_DIR:-/opt/snagtime/secrets}/snagtime_sso_secret" }
+  postgres_ca_cert: { file: "${COUNCILFORGE_POSTGRES_CA_FILE:-/opt/councilforge/postgres-certs/server.crt}" }
+
+networks:
+  councilforge-public: { external: true }
+  traefik-public: { external: true }

@@ -146,7 +146,14 @@ export class SmtpEmailProvider implements EmailProvider {
     // Retrying after an accepted response would create a duplicate external delivery.
   }
 }
-export function getEmailProvider(): EmailProvider { return process.env.EMAIL_PROVIDER === "smtp" ? new SmtpEmailProvider() : new LocalInboxEmailProvider(); }
+export class DisabledEmailProvider implements EmailProvider {
+  async send() { /* Explicit standalone mode: no external delivery configured. */ }
+}
+export function getEmailProvider(): EmailProvider {
+  if (process.env.EMAIL_PROVIDER === "smtp") return new SmtpEmailProvider();
+  if (process.env.EMAIL_PROVIDER === "disabled" && process.env.SNAGTIME_STANDALONE_MODE === "true") return new DisabledEmailProvider();
+  return new LocalInboxEmailProvider();
+}
 
 async function tokenStillCurrent(row: { kind: string; workspaceId: string; bookingId: string | null; recipientEmail: string; payloadJson: string }, at: Date) { return Boolean(await render({ ...row, subjectSnapshot: "" }, at)); }
 export async function processEmailOutbox(workspaceId?: string, now = new Date(), provider: EmailProvider = getEmailProvider(), signal?: AbortSignal) {

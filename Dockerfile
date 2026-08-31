@@ -1,16 +1,20 @@
 # syntax=docker/dockerfile:1.7
 FROM node:24.15.0-bookworm-slim@sha256:4e6b70dd6cbfc88c8157ba19aa3d9f9cce6ba4703576d55459e45efcbc9c5f5d AS deps
 WORKDIR /src
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 COPY apps/web/package.json apps/web/package.json
 RUN npm ci --ignore-scripts
 
 FROM deps AS builder
 ARG BUILD_ID
-ENV BUILD_ID=${BUILD_ID}
+ARG NEXT_PUBLIC_COUNCILFORGE_SSO_ONLY=false
+ENV BUILD_ID=${BUILD_ID} NEXT_PUBLIC_COUNCILFORGE_SSO_ONLY=${NEXT_PUBLIC_COUNCILFORGE_SSO_ONLY}
 COPY . .
 RUN node -e "if(!/^[a-f0-9]{40,64}$/i.test(process.env.BUILD_ID||''))throw new Error('required immutable BUILD_ID build argument missing or invalid')" \
- && npm run db:generate && npm run db:generate:postgres && npm run worker:build && npm run build
+ && npm run db:generate && npm run db:generate:postgres && npm run db:baseline:postgres \
+ && node scripts/stage-councilforge-schema.mjs && npm run worker:build && npm run build
 
 FROM deps AS production-deps
 COPY scripts/runtime-dependency-check.mjs ./scripts/runtime-dependency-check.mjs
@@ -21,8 +25,11 @@ RUN npm prune --omit=dev --ignore-scripts \
 FROM node:24.15.0-bookworm-slim@sha256:4e6b70dd6cbfc88c8157ba19aa3d9f9cce6ba4703576d55459e45efcbc9c5f5d AS runtime
 ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 COPY --from=production-deps --chown=node:node /src/node_modules ./node_modules
 COPY --from=builder --chown=node:node /src/node_modules/@tempocove/postgresql-client ./node_modules/@tempocove/postgresql-client
+COPY --from=builder --chown=node:node /src/node_modules/@tempocove/postgresql-client ./apps/web/node_modules/@tempocove/postgresql-client
 COPY --from=builder --chown=node:node /src/apps/web/.next/standalone ./
 COPY --from=builder --chown=node:node /src/apps/web/.next/static ./apps/web/.next/static
 COPY --from=builder --chown=node:node /src/dist ./dist
@@ -35,7 +42,7 @@ CMD ["node","apps/web/server.js"]
 
 FROM postgres:18.6-bookworm@sha256:7d2695c3aa88e792e8b3b233e7e4adb296a20412c6c0ca361e3edaaacfada108 AS migration
 WORKDIR /migrations
-COPY --chown=postgres:postgres prisma/postgresql/migrations/202608220100_production_baseline/migration.sql ./migration.sql
+COPY --from=builder --chown=postgres:postgres /src/dist/councilforge/snagtime-schema.sql ./migration.sql
 COPY --chown=postgres:postgres scripts/migration-entrypoint.sh ./migration-entrypoint.sh
 USER postgres
 ENTRYPOINT ["/bin/sh","/migrations/migration-entrypoint.sh"]

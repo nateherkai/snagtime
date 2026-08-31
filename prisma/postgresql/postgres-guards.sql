@@ -26,7 +26,7 @@ GRANT tempocove_migration TO tempocove_migration_login;
 REVOKE tempocove_worker,tempocove_monitor FROM tempocove_app_login;
 REVOKE tempocove_app,tempocove_monitor FROM tempocove_worker_login;
 REVOKE tempocove_app,tempocove_worker FROM tempocove_monitor_login;
-GRANT USAGE ON SCHEMA public TO tempocove_app,tempocove_worker,tempocove_monitor;
+GRANT USAGE ON SCHEMA public TO tempocove_app,tempocove_worker,tempocove_monitor,tempocove_rls_verifier,tempocove_migration;
 GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO tempocove_app;
 GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO tempocove_app;
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM tempocove_worker,tempocove_monitor;
@@ -253,7 +253,7 @@ DECLARE
   authority_secret text;
   expected_signature text;
 BEGIN
-  IF mode_value IS NULL OR mode_value NOT IN ('auth','bootstrap','session','workspace','public','capability','provider')
+  IF mode_value IS NULL OR mode_value NOT IN ('auth','bootstrap','federated','session','workspace','public','capability','provider')
      OR supplied_signature IS NULL OR supplied_signature !~ '^[0-9a-f]{64}$' THEN RETURN false; END IF;
   IF required_mode IS NOT NULL AND mode_value <> required_mode THEN RETURN false; END IF;
   SELECT secret INTO authority_secret FROM tempocove_context_authority WHERE singleton;
@@ -767,8 +767,13 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO tempocove_migration;
 DO $ownership$
 DECLARE item record;
 BEGIN
-  FOR item IN SELECT c.relkind,c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','S') LOOP
-    EXECUTE format('ALTER %s %I OWNER TO tempocove_migration',CASE WHEN item.relkind='S' THEN 'SEQUENCE' ELSE 'TABLE' END,item.relname);
+  FOR item IN SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' LOOP
+    EXECUTE format('ALTER TABLE %I OWNER TO tempocove_migration',item.relname);
+  END LOOP;
+  FOR item IN SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname='public' AND c.relkind='S'
+      AND NOT EXISTS(SELECT 1 FROM pg_depend d WHERE d.objid=c.oid AND d.deptype IN ('a','i')) LOOP
+    EXECUTE format('ALTER SEQUENCE %I OWNER TO tempocove_migration',item.relname);
   END LOOP;
   FOR item IN SELECT p.oid::regprocedure AS identity FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname<>'tempocove_context_valid' LOOP
     EXECUTE format('ALTER FUNCTION %s OWNER TO tempocove_migration',item.identity);
