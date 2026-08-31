@@ -49,7 +49,8 @@ describe("payment and booking authority migration guards", () => {
     try {
       sqlite.exec("PRAGMA foreign_keys=ON");
       const migrationsRoot = "prisma/migrations";
-      for (const directory of readdirSync(migrationsRoot).sort()) {
+      const migrationDirectories = readdirSync(migrationsRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory() && !entry.name.startsWith("._")).map((entry) => entry.name).sort();
+      for (const directory of migrationDirectories) {
         if (directory === "202608240003_payment_investor_safety") continue;
         sqlite.exec(readFileSync(join(migrationsRoot, directory, "migration.sql"), "utf8"));
       }

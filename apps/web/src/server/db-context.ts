@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHmac } from "node:crypto";
 
-export type DatabaseContext = { mode: "auth" | "bootstrap" | "session" | "workspace" | "public" | "capability" | "provider"; workspaceId?: string; userId?: string; sessionHash?: string; subject?: string; action?: string };
+export type DatabaseContext = { mode: "auth" | "bootstrap" | "federated" | "session" | "workspace" | "public" | "capability" | "provider"; workspaceId?: string; userId?: string; sessionHash?: string; subject?: string; action?: string };
 type StoredContext = DatabaseContext & { transaction?: Record<string, unknown> };
 export const databaseContext = new AsyncLocalStorage<StoredContext>();
 

@@ -42,7 +42,7 @@ function createDatabaseClient() {
 }
 
 const baseDb = globalForPrisma.prisma ?? createDatabaseClient();
-const modelNames = new Set(["user","workspace","membership","workspaceInvitation","eventType","eventDuration","customQuestion","availabilitySchedule","availabilityInterval","availabilityOverride","workspaceBranding","booking","bookingAnswer","bookingOccupancy","bookingCapability","bookingManageSession","integrationOutbox","accountActionToken","bookingRecoveryToken","emailOutbox","localInboxMessage","authSession","oAuthState","oAuthConnection","webhookEvent","rateLimitBucket","workerHeartbeat"]);
+const modelNames = new Set(["user","workspace","membership","workspaceInvitation","eventType","eventDuration","customQuestion","availabilitySchedule","availabilityInterval","availabilityOverride","workspaceBranding","booking","bookingAnswer","bookingOccupancy","bookingCapability","bookingManageSession","integrationOutbox","accountActionToken","bookingRecoveryToken","emailOutbox","localInboxMessage","authSession","oAuthState","oAuthConnection","webhookEvent","rateLimitBucket","workerHeartbeat","councilForgeSsoReplay"]);
 function contextualClient(client: PrismaClient) {
   if (process.env.DATABASE_PROVIDER !== "postgresql" || process.env.NODE_ENV !== "production" || process.env.DATABASE_ROLE === "worker") return client;
   return new Proxy(client as unknown as Record<string, unknown>, { get(target, property) {

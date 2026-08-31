@@ -13,6 +13,7 @@ export default defineConfig({
     // files concurrently lets one file observe or clean up another file's rows.
     fileParallelism: false,
     include: ["apps/web/src/**/*.test.ts"],
+    exclude: ["**/._*"],
     coverage: {
       reporter: ["text", "json-summary"],
     },

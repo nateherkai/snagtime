@@ -6,5 +6,5 @@ export default defineConfig([
   ...nextVitals,
   ...nextTypeScript,
   { rules: { "@next/next/no-html-link-for-pages": "off" } },
-  globalIgnores(["**/.next/**", "**/.next-*/**", "**/node_modules/**", "**/coverage/**", "prisma/migrations/**"]),
+  globalIgnores(["**/._*", "**/.next/**", "**/.next-*/**", "**/node_modules/**", "**/coverage/**", "prisma/migrations/**"]),
 ]);
